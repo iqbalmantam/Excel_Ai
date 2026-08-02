@@ -74,22 +74,48 @@ def get_ai_insight(df_summary_str, context_info):
     except Exception as e:
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
-def ask_data_chat(df_preview_str, user_query):
-    """Fungsi Tanya Jawab / Chat dengan Data Excel."""
+def ask_data_chat(df, user_query):
+    """Fungsi Tanya Jawab / Chat cerdas yang menghitung agregasi nyata dari DataFrame."""
     if not api_key:
         return "⚠️ GROQ_API_KEY tidak terdeteksi."
     try:
         client = Groq(api_key=api_key)
-        prompt = f"""
-        Kamu adalah Asisten Analis Data. Jawab pertanyaan pengguna berdasarkan sampel data Excel berikut.
         
-        Sampel Data / Summary:
-        {df_preview_str}
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        
+        # Susun agregasi otomatis untuk semua kombinasi kolom kategori & angka utama
+        summary_context = ""
+        if categorical_cols and numeric_cols:
+            for cat in categorical_cols[:3]: # Ambil hingga 3 kolom kategori utama
+                for num in numeric_cols[:2]: # Ambil hingga 2 kolom angka utama
+                    top_grouped = df.groupby(cat)[num].sum().reset_index().sort_values(by=num, ascending=False).head(10)
+                    summary_context += f"\n--- Top 10 berdasarkan '{cat}' & Total '{num}' ---\n"
+                    summary_context += top_grouped.to_string(index=False) + "\n"
+
+        sample_rows = df.head(15).to_string(index=False)
+        
+        prompt = f"""
+        Kamu adalah Asisten Data Analyst yang sangat cerdas dan teliti. Jawab pertanyaan pengguna berdasarkan data Excel berikut.
+        
+        {summary_context}
+        
+        Sampel Baris Data Mentah (15 baris pertama):
+        {sample_rows}
+        
+        Informasi Dataset:
+        - Total Baris: {len(df)}
+        - Kolom Kategori: {categorical_cols}
+        - Kolom Numerik: {numeric_cols}
         
         Pertanyaan Pengguna: {user_query}
         
-        Berikan jawaban yang singkat, tepat, akurat, dan mudah dipahami.
+        Petunjuk Jawaban:
+        - Jika pengguna meminta Top 10 / Ranking / Tertinggi, gunakan tabel agregasi yang telah disediakan di atas.
+        - Tampilkan hasilnya dalam bentuk tabel Markdown yang rapi dan sertakan angkanya.
+        - Berikan jawaban yang langsung, akurat, dan profesional.
         """
+        
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
@@ -155,7 +181,7 @@ def convert_df_to_excel(df):
 st.title("🧠 Smart AI Excel Summarizer Pro Studio")
 st.caption("Upload file Excel mentah, bersihkan data, filter interaktif, obrolkan data dengan AI, buat pivot & grafik kustom, lalu unduh laporan PDF/Excel.")
 
-# UPLOAD FILE DI HALAMAN UTAMA (TIDAK PERLU SIDEBAR)
+# UPLOAD FILE DI HALAMAN UTAMA
 st.write("---")
 uploaded_file = st.file_uploader("📁 Pilih & Upload File Excel (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
@@ -264,7 +290,7 @@ if uploaded_file:
     # TAB 2: CHAT / TALK TO DATA
     with tab2:
         st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
-        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Siapa Top 3 Customer terbanyak?', 'Berapa total penjualan?')")
+        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Tampilkan top ten customer tertinggi', 'Berapa total penjualan?')")
         
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
@@ -280,9 +306,8 @@ if uploaded_file:
                 st.markdown(user_prompt)
                 
             with st.chat_message("assistant"):
-                with st.spinner("Membaca data dan berpikir..."):
-                    data_sample = filtered_df.describe(include='all').to_string()
-                    ai_response = ask_data_chat(data_sample, user_prompt)
+                with st.spinner("Membaca data dan menghitung agregasi..."):
+                    ai_response = ask_data_chat(filtered_df, user_prompt)
                     st.markdown(ai_response)
                     
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
