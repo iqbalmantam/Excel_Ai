@@ -16,25 +16,40 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# 2. CUSTOM CSS: HIDE ALL HEADER BUTTONS & KEEP SIDEBAR TOGGLE
+# 2. CUSTOM CSS: HIDE ALL HEADER CONTENT (FORK, GITHUB, ETC)
 # ---------------------------------------------------------
 hide_streamlit_style = """
             <style>
-            /* Sembunyikan elemen header Streamlit (Logo GitHub, Share, Star, Dots) */
-            [data-testid="stHeader"] {
-                background-color: transparent !important;
+            /* Sembunyikan seluruh isi header bawaan Streamlit (Fork, Github, Share, dll) */
+            header[data-testid="stHeader"] {
+                background: transparent !important;
+                height: 0px !important;
+                min-height: 0px !important;
             }
-            [data-testid="stAppHeader"] {
+            
+            /* Sembunyikan semua tombol di dalam header */
+            header[data-testid="stHeader"] > div {
                 display: none !important;
             }
+
+            /* Tetap sembunyikan menu & footer */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
             
-            /* Tetap tampilkan tombol toggle sidebar (panah) di HP */
-            [data-testid="stSidebarCollapseButton"] {
+            /* Tampilkan dan posisikan tombol toggle sidebar di pojok kiri atas */
+            [data-testid="stSidebarCollapseButton"], 
+            button[aria-label="Open sidebar"],
+            button[aria-label="Close sidebar"] {
                 visibility: visible !important;
-                display: block !important;
+                display: flex !important;
+                position: fixed !important;
+                top: 12px !important;
+                left: 12px !important;
                 z-index: 999999 !important;
+                background-color: #ffffff !important;
+                border: 1px solid #e0e0e0 !important;
+                border-radius: 8px !important;
+                box-shadow: 0px 2px 4px rgba(0,0,0,0.1) !important;
             }
             
             .created-by {
@@ -42,7 +57,7 @@ hide_streamlit_style = """
                 color: #6c757d;
                 font-size: 0.9rem;
                 font-weight: bold;
-                margin-top: -10px;
+                margin-top: 10px;
                 margin-bottom: 20px;
                 border-bottom: 1px solid #e9ecef;
                 padding-bottom: 8px;
