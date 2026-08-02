@@ -202,4 +202,3 @@ if uploaded_file:
 
 else:
     st.info("💡 Silakan upload file Excel di sidebar kiri untuk memulai.")
-.
