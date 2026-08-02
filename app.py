@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from fpdf import FPDF
-import google.generativeai as genai
+from google import genai
 
 # ---------------------------------------------------------
 # 1. KONFIGURASI HALAMAN
@@ -46,18 +46,13 @@ st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 def get_ai_insight(df_summary_str, context_info):
-    """Fungsi untuk mengirim data ringkasan ke Gemini AI."""
+    """Fungsi untuk mengirim data ringkasan ke Gemini AI menggunakan SDK google-genai terbaru."""
     if not api_key:
         return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang di Secrets."
     
     try:
-        genai.configure(api_key=api_key)
-        
-        # Mencoba model gemini-1.5-flash, jika bermasalah otomatis ganti ke gemini-1.5-pro
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-        except:
-            model = genai.GenerativeModel('gemini-1.5-pro')
+        # Inisialisasi client baru dari google-genai SDK
+        client = genai.Client(api_key=api_key)
         
         prompt = f"""
         Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
@@ -72,7 +67,12 @@ def get_ai_insight(df_summary_str, context_info):
         3. **Rekomendasi Bisnis**: Tindakan konkret yang sebaiknya diambil manajemen berdasarkan data ini.
         Format respons menggunakan Markdown yang rapi dan lugas.
         """
-        response = model.generate_content(prompt)
+        
+        # Panggilan model gemini-2.5-flash menggunakan SDK terbaru
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         return response.text
     except Exception as e:
         return f"Gagal mendapatkan respon AI: {str(e)}"
