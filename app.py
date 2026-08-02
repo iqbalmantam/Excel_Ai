@@ -52,7 +52,9 @@ def get_ai_insight(df_summary_str, context_info):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Menggunakan model Gemini terbaru
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""
         Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
@@ -153,7 +155,7 @@ if uploaded_file:
             summary_df = df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
             summary_df = summary_df.sort_values(by='sum', ascending=False)
             
-            if st.button("🚀 Hasikan AI Executive Summary", type="primary"):
+            if st.button("🚀 Hasilkan AI Executive Summary", type="primary"):
                 with st.spinner("Gemini AI sedang membaca pola data..."):
                     ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}'."
                     data_str = summary_df.head(15).to_string(index=False)
