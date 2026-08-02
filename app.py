@@ -11,17 +11,26 @@ from groq import Groq
 st.set_page_config(
     page_title="Smart AI Excel Summarizer Studio",
     page_icon="🧠",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"  # Otomatis buka sidebar di layar yang mendukung
 )
 
 # ---------------------------------------------------------
-# 2. CUSTOM CSS: HIDE STREAMLIT HEADER & WATERMARK
+# 2. CUSTOM CSS: HIDE STREAMLIT MENU BUT KEEP SIDEBAR TOGGLE
 # ---------------------------------------------------------
 hide_streamlit_style = """
             <style>
             #MainMenu {visibility: hidden;}
-            header {visibility: hidden;}
             footer {visibility: hidden;}
+            
+            /* Tetap tampilkan tombol toggle sidebar (panah) di HP */
+            [data-testid="stSidebarCollapseButton"] {
+                visibility: visible !important;
+                display: block !important;
+            }
+            [data-testid="stHeader"] {
+                background-color: transparent !important;
+            }
             
             .created-by {
                 text-align: right;
@@ -140,7 +149,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     return pdf_buffer
 
 def convert_df_to_excel(df):
-    """FITUR 4: Export ke File Excel (.xlsx) Rapi."""
+    """Export ke File Excel (.xlsx) Rapi."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Summary_Result')
@@ -164,31 +173,25 @@ if uploaded_file:
         selected_sheet = st.sidebar.selectbox("Pilih Sheet", excel_file.sheet_names)
         df_raw = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
 
-    # ---------------------------------------------------------
-    # FITUR 3: AUTO DATA CLEANING
-    # ---------------------------------------------------------
+    # --- AUTO DATA CLEANING ---
     st.sidebar.divider()
     st.sidebar.header("🧹 2. Data Cleaning")
     auto_clean = st.sidebar.checkbox("Aktifkan Auto-Cleaning", value=True)
     
     df = df_raw.copy()
     if auto_clean:
-        # Hapus baris duplikat & potong spasi berlebih pada kolom teks
         df = df.drop_duplicates()
         str_cols = df.select_dtypes(include=['object']).columns
         for col in str_cols:
             df[col] = df[col].astype(str).str.strip()
 
-    # ---------------------------------------------------------
-    # FITUR 1: DYNAMIC FILTER & RANGE TANGGAL
-    # ---------------------------------------------------------
+    # --- DYNAMIC FILTER & RANGE TANGGAL ---
     st.sidebar.divider()
     st.sidebar.header("🔍 3. Dynamic Filter")
     
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     
-    # Deteksi Otomatis Kolom Tanggal
     datetime_cols = []
     for col in df.columns:
         if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -200,7 +203,6 @@ if uploaded_file:
 
     filtered_df = df.copy()
     
-    # Filter Tanggal jika ada
     if datetime_cols:
         date_col_selected = st.sidebar.selectbox("Filter Kolom Tanggal:", datetime_cols)
         min_date = filtered_df[date_col_selected].min().date()
@@ -214,7 +216,6 @@ if uploaded_file:
                 (filtered_df[date_col_selected].dt.date <= end_d)
             ]
 
-    # Filter Kategori Opsional
     if categorical_cols:
         filter_cat_col = st.sidebar.selectbox("Filter Kategori Specific (Opsional):", ["-- Semua --"] + categorical_cols)
         if filter_cat_col != "-- Semua --":
@@ -222,9 +223,7 @@ if uploaded_file:
             selected_vals = st.sidebar.multiselect(f"Pilih Nilai {filter_cat_col}:", unique_vals, default=unique_vals)
             filtered_df = filtered_df[filtered_df[filter_cat_col].isin(selected_vals)]
 
-    # ---------------------------------------------------------
-    # TAB NAVIGASI UTAMA APLIKASI
-    # ---------------------------------------------------------
+    # --- TAB NAVIGASI UTAMA ---
     tab1, tab2, tab3, tab4 = st.tabs([
         "🤖 AI Executive Summary", 
         "💬 Talk to Data (Q&A)", 
@@ -232,7 +231,7 @@ if uploaded_file:
         "📌 Data Preview & Export"
     ])
 
-    # --- TAB 1: AI EXECUTIVE SUMMARY ---
+    # TAB 1: AI EXECUTIVE SUMMARY
     with tab1:
         st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if categorical_cols and numeric_cols:
@@ -245,7 +244,7 @@ if uploaded_file:
             summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
             summary_df = summary_df.sort_values(by='sum', ascending=False)
             
-            if st.button("🚀 Hasilkan AI Executive Summary", type="primary"):
+            if st.button("🚀 Hasikan AI Executive Summary", type="primary"):
                 with st.spinner("Groq AI sedang menganalisis data terfilter..."):
                     ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
                     data_str = summary_df.head(15).to_string(index=False)
@@ -272,16 +271,14 @@ if uploaded_file:
         else:
             st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom angka.")
 
-    # --- TAB 2: FITUR CHAT / TALK TO DATA ---
+    # TAB 2: CHAT / TALK TO DATA
     with tab2:
         st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
         st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Siapa Top 3 Customer terbanyak?', 'Berapa total penjualan?')")
         
-        # Inisialisasi Riwayat Chat
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
             
-        # Tampilkan riwayat chat
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
@@ -294,14 +291,13 @@ if uploaded_file:
                 
             with st.chat_message("assistant"):
                 with st.spinner("Membaca data dan berpikir..."):
-                    # Buat sampel konteks data singkat untuk AI
                     data_sample = filtered_df.describe(include='all').to_string()
                     ai_response = ask_data_chat(data_sample, user_prompt)
                     st.markdown(ai_response)
                     
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
 
-    # --- TAB 3: FITUR CHART SELECTOR & PIVOT STUDIO ---
+    # TAB 3: CHART SELECTOR & PIVOT STUDIO
     with tab3:
         st.subheader("🔀 Custom Pivot & Dynamic Chart Studio")
         
@@ -317,7 +313,6 @@ if uploaded_file:
             p_res = pd.pivot_table(filtered_df, index=p_rows, values=p_vals, aggfunc=p_agg).reset_index()
             st.dataframe(p_res, use_container_width=True)
             
-            # FITUR 5: PEMILIH JENIS GRAFIK (DYNAMIC CHART SELECTOR)
             st.divider()
             st.write("### 📊 Visualisasi Grafik")
             chart_type = st.radio("Pilih Jenis Grafik:", ["Bar Chart", "Line Chart", "Pie Chart", "Scatter Plot"], horizontal=True)
@@ -333,7 +328,7 @@ if uploaded_file:
                 
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- TAB 4: PREVIEW DATA & EXPORT EXCEL ---
+    # TAB 4: PREVIEW DATA & EXPORT EXCEL
     with tab4:
         st.subheader("📌 Data Preview & Export Excel")
         st.write(f"Total Baris Data Terfilter: **{len(filtered_df)}** (Dari Total Raw: **{len(df_raw)}**)")
@@ -344,7 +339,6 @@ if uploaded_file:
         
         col_ex1, col_ex2 = st.columns(2)
         with col_ex1:
-            # Download CSV
             csv_data = filtered_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Unduh Data (CSV)",
@@ -354,7 +348,6 @@ if uploaded_file:
                 use_container_width=True
             )
         with col_ex2:
-            # Download Excel .xlsx
             excel_data = convert_df_to_excel(filtered_df)
             st.download_button(
                 label="📊 Unduh Data Rapi (.xlsx)",
