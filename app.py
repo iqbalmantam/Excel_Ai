@@ -12,14 +12,21 @@ st.set_page_config(
     page_title="Smart AI Excel Summarizer Studio",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded"  # Otomatis buka sidebar di layar yang mendukung
+    initial_sidebar_state="expanded"
 )
 
 # ---------------------------------------------------------
-# 2. CUSTOM CSS: HIDE STREAMLIT MENU BUT KEEP SIDEBAR TOGGLE
+# 2. CUSTOM CSS: HIDE ALL HEADER BUTTONS & KEEP SIDEBAR TOGGLE
 # ---------------------------------------------------------
 hide_streamlit_style = """
             <style>
+            /* Sembunyikan elemen header Streamlit (Logo GitHub, Share, Star, Dots) */
+            [data-testid="stHeader"] {
+                background-color: transparent !important;
+            }
+            [data-testid="stAppHeader"] {
+                display: none !important;
+            }
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
             
@@ -27,9 +34,7 @@ hide_streamlit_style = """
             [data-testid="stSidebarCollapseButton"] {
                 visibility: visible !important;
                 display: block !important;
-            }
-            [data-testid="stHeader"] {
-                background-color: transparent !important;
+                z-index: 999999 !important;
             }
             
             .created-by {
