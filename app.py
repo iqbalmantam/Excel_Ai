@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from fpdf import FPDF
-from google import genai
+from groq import Groq
 
 # ---------------------------------------------------------
 # 1. KONFIGURASI HALAMAN
@@ -41,18 +41,18 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. INITIALIZATION GEMINI API FROM SECRETS
+# 3. INITIALIZATION GROQ API FROM SECRETS
 # ---------------------------------------------------------
-api_key = st.secrets.get("GEMINI_API_KEY", None)
+api_key = st.secrets.get("GROQ_API_KEY", None)
 
 def get_ai_insight(df_summary_str, context_info):
-    """Fungsi untuk mengirim data ringkasan ke Gemini AI menggunakan SDK google-genai terbaru."""
+    """Fungsi untuk mengirim data ringkasan ke Groq API menggunakan Llama 3.3."""
     if not api_key:
-        return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang di Secrets."
+        return "⚠️ GROQ_API_KEY tidak ditemukan di Streamlit Secrets. Pastikan sudah memasukkan GROQ_API_KEY di menu Secrets."
     
     try:
-        # Inisialisasi client dari google-genai SDK
-        client = genai.Client(api_key=api_key)
+        # Inisialisasi Groq Client
+        client = Groq(api_key=api_key)
         
         prompt = f"""
         Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
@@ -68,12 +68,17 @@ def get_ai_insight(df_summary_str, context_info):
         Format respons menggunakan Markdown yang rapi dan lugas.
         """
         
-        # Panggilan model gemini-1.5-flash yang stabil
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
+        # Panggilan model Llama-3.3-70b via Groq
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama-3.3-70b-versatile",
         )
-        return response.text
+        return chat_completion.choices[0].message.content
     except Exception as e:
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
@@ -147,7 +152,7 @@ if uploaded_file:
 
     # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
-        st.subheader("🤖 Analisis Naratif Berbasis Gemini AI")
+        st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if categorical_cols and numeric_cols:
             c1, c2 = st.columns(2)
             with c1:
@@ -159,7 +164,7 @@ if uploaded_file:
             summary_df = summary_df.sort_values(by='sum', ascending=False)
             
             if st.button("🚀 Hasikan AI Executive Summary", type="primary"):
-                with st.spinner("Gemini AI sedang membaca pola data..."):
+                with st.spinner("Groq AI sedang menganalisis data..."):
                     ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}'."
                     data_str = summary_df.head(15).to_string(index=False)
                     res = get_ai_insight(data_str, ctx)
