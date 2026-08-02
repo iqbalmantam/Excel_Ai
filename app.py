@@ -51,7 +51,7 @@ def get_ai_insight(df_summary_str, context_info):
         return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang di Secrets."
     
     try:
-        # Inisialisasi client baru dari google-genai SDK
+        # Inisialisasi client resmi dari google-genai SDK
         client = genai.Client(api_key=api_key)
         
         prompt = f"""
@@ -68,9 +68,9 @@ def get_ai_insight(df_summary_str, context_info):
         Format respons menggunakan Markdown yang rapi dan lugas.
         """
         
-        # Panggilan model gemini-2.5-flash menggunakan SDK terbaru
+        # Panggilan model gemini-1.5-flash yang valid dan stabil
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         return response.text
@@ -207,3 +207,106 @@ if uploaded_file:
 
 else:
     st.info("💡 Silakan upload file Excel di sidebar kiri untuk memulai.")
+￼Enter io
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from fpdf import FPDF
+from google import genai
+
+# ---------------------------------------------------------
+# 1. KONFIGURASI HALAMAN
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="Smart AI Excel Summarizer",
+    page_icon="🧠",
+    layout="wide"
+)
+
+# ---------------------------------------------------------
+# 2. CUSTOM CSS: HIDE STREAMLIT HEADER & WATERMARK
+# ---------------------------------------------------------
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            
+            .created-by {
+                text-align: right;
+                color: #6c757d;
+                font-size: 0.9rem;
+                font-weight: bold;
+                margin-top: -10px;
+                margin-bottom: 20px;
+                border-bottom: 1px solid #e9ecef;
+                padding-bottom: 8px;
+            }
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# Watermark / Author Name
+st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 3. INITIALIZATION GEMINI API FROM SECRETS
+# ---------------------------------------------------------
+api_key = st.secrets.get("GEMINI_API_KEY", None)
+
+def get_ai_insight(df_summary_str, context_info):
+    """Fungsi untuk mengirim data ringkasan ke Gemini AI menggunakan SDK google-genai terbaru."""
+    if not api_key:
+        return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang di Secrets."
+    
+    try:
+        # Inisialisasi client resmi dari google-genai SDK
+        client = genai.Client(api_key=api_key)
+        
+        prompt = f"""
+        Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
+        
+        Konteks Data: {context_info}
+        Ringkasan Data:
+        {df_summary_str}
+        
+        Tolong buatkan Executive Summary yang cerdas dan profesional dalam bahasa Indonesia:
+        1. **Temuan Utama (Key Takeaways)**: Poin-poin paling krusial.
+        2. **Anomali / Tren Menarik**: Pola unik, lonjakan, atau penurunan signifikan.
+        3. **Rekomendasi Bisnis**: Tindakan konkret yang sebaiknya diambil manajemen berdasarkan data ini.
+        Format respons menggunakan Markdown yang rapi dan lugas.
+        """
+        
+        # Panggilan model gemini-1.5-flash yang valid dan stabil
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        return f"Gagal mendapatkan respon AI: {str(e)}"
+
+# ---------------------------------------------------------
+# 4. HELPER EXPORT PDF
+# ---------------------------------------------------------
+def generate_smart_pdf(title, ai_insight, df_summary):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Title
+    pdf.set_font("Helvetica", style="B", size=15)
+    pdf.cell(0, 10, title, ln=True, align="C")
+    pdf.ln(5)
+    
+    # AI Summary
+    pdf.set_font("Helvetica", style="B", size=11)
+    pdf.cell(0, 8, "AI Executive Summary", ln=True)
+    pdf.set_font("Helvetica", size=8.5)
+    clean_text = ai_insight.replace("*", "").replace("#", "")
+    pdf.multi_cell(0, 5, clean_text)
+    pdf.ln(6)
+    
+    # Table Data
+    pdf.set_font("Helvetica", style="B", size=10)
+    pdf.cell(0, 8, "Data Summary Table", ln=True)
