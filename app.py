@@ -6,7 +6,7 @@ from fpdf import FPDF
 import google.generativeai as genai
 
 # ---------------------------------------------------------
-# 1. KONFIGURASI HALAMAN & GEMINI API
+# 1. KONFIGURASI HALAMAN
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Smart AI Excel Summarizer",
@@ -14,15 +14,41 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🧠 Smart AI Excel Summarizer & Executive Insights")
-st.caption("Upload file Excel mentah. Sistem akan membuat Pivot Table kustom, grafik, dan AI akan menyusun Executive Summary otomatis.")
+# ---------------------------------------------------------
+# 2. CUSTOM CSS: HIDE STREAMLIT HEADER & WATERMARK
+# ---------------------------------------------------------
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            
+            .created-by {
+                text-align: right;
+                color: #6c757d;
+                font-size: 0.9rem;
+                font-weight: bold;
+                margin-top: -10px;
+                margin-bottom: 20px;
+                border-bottom: 1px solid #e9ecef;
+                padding-bottom: 8px;
+            }
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Inisialisasi Gemini API secara otomatis dari Streamlit Secrets
+# Watermark / Author Name
+st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 3. INITIALIZATION GEMINI API FROM SECRETS
+# ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 def get_ai_insight(df_summary_str, context_info):
+    """Fungsi untuk mengirim data ringkasan ke Gemini AI."""
     if not api_key:
-        return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang."
+        return "⚠️ API Key tidak ditemukan di Streamlit Secrets. Pastikan GEMINI_API_KEY sudah terpasang di Secrets."
     
     try:
         genai.configure(api_key=api_key)
@@ -47,7 +73,7 @@ def get_ai_insight(df_summary_str, context_info):
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
 # ---------------------------------------------------------
-# 2. HELPER EXPORT PDF
+# 4. HELPER EXPORT PDF
 # ---------------------------------------------------------
 def generate_smart_pdf(title, ai_insight, df_summary):
     pdf = FPDF()
@@ -59,7 +85,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     pdf.cell(0, 10, title, ln=True, align="C")
     pdf.ln(5)
     
-    # AI Summary Section
+    # AI Summary
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
     pdf.set_font("Helvetica", size=8.5)
@@ -67,7 +93,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
     
-    # Table Data Section
+    # Table Data
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(0, 8, "Data Summary Table", ln=True)
     
@@ -93,8 +119,11 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     return pdf_buffer
 
 # ---------------------------------------------------------
-# 3. UPLOAD & PEMROSESAN DATA
+# 5. JUDUL APLIKASI & UPLOAD DATA
 # ---------------------------------------------------------
+st.title("🧠 Smart AI Excel Summarizer & Executive Insights")
+st.caption("Upload file Excel mentah. Sistem akan membuat Pivot Table kustom, grafik, dan AI akan menyusun Executive Summary otomatis.")
+
 st.sidebar.header("📁 Upload File Excel")
 uploaded_file = st.sidebar.file_uploader("Pilih File (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
@@ -173,3 +202,4 @@ if uploaded_file:
 
 else:
     st.info("💡 Silakan upload file Excel di sidebar kiri untuk memulai.")
+.
