@@ -9,7 +9,7 @@ from groq import Groq
 # 1. KONFIGURASI HALAMAN
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Smart AI Excel Summarizer",
+    page_title="Smart AI Excel Summarizer Studio",
     page_icon="🧠",
     layout="wide"
 )
@@ -46,14 +46,11 @@ st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow
 api_key = st.secrets.get("GROQ_API_KEY", None)
 
 def get_ai_insight(df_summary_str, context_info):
-    """Fungsi untuk mengirim data ringkasan ke Groq API menggunakan Llama 3.3."""
+    """Fungsi Executive Summary berbasis Groq Llama 3.3."""
     if not api_key:
-        return "⚠️ GROQ_API_KEY tidak ditemukan di Streamlit Secrets. Pastikan sudah memasukkan GROQ_API_KEY di menu Secrets."
-    
+        return "⚠️ GROQ_API_KEY tidak ditemukan di Streamlit Secrets."
     try:
-        # Inisialisasi Groq Client
         client = Groq(api_key=api_key)
-        
         prompt = f"""
         Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
         
@@ -67,35 +64,50 @@ def get_ai_insight(df_summary_str, context_info):
         3. **Rekomendasi Bisnis**: Tindakan konkret yang sebaiknya diambil manajemen berdasarkan data ini.
         Format respons menggunakan Markdown yang rapi dan lugas.
         """
-        
-        # Panggilan model Llama-3.3-70b via Groq
         chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
+def ask_data_chat(df_preview_str, user_query):
+    """Fungsi Tanya Jawab / Chat dengan Data Excel."""
+    if not api_key:
+        return "⚠️ GROQ_API_KEY tidak terdeteksi."
+    try:
+        client = Groq(api_key=api_key)
+        prompt = f"""
+        Kamu adalah Asisten Analis Data. Jawab pertanyaan pengguna berdasarkan sampel data Excel berikut.
+        
+        Sampel Data / Summary:
+        {df_preview_str}
+        
+        Pertanyaan Pengguna: {user_query}
+        
+        Berikan jawaban yang singkat, tepat, akurat, dan mudah dipahami.
+        """
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+        )
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        return f"Gagal menjawab pertanyaan: {str(e)}"
+
 # ---------------------------------------------------------
-# 4. HELPER EXPORT PDF
+# 4. HELPER EXPORT PDF & EXCEL
 # ---------------------------------------------------------
 def generate_smart_pdf(title, ai_insight, df_summary):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Title
     pdf.set_font("Helvetica", style="B", size=15)
     pdf.cell(0, 10, title, ln=True, align="C")
     pdf.ln(5)
     
-    # AI Summary
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
     pdf.set_font("Helvetica", size=8.5)
@@ -103,7 +115,6 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
     
-    # Table Data
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(0, 8, "Data Summary Table", ln=True)
     
@@ -128,27 +139,98 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     pdf_buffer.seek(0)
     return pdf_buffer
 
+def convert_df_to_excel(df):
+    """FITUR 4: Export ke File Excel (.xlsx) Rapi."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Summary_Result')
+    output.seek(0)
+    return output
+
 # ---------------------------------------------------------
 # 5. JUDUL APLIKASI & UPLOAD DATA
 # ---------------------------------------------------------
-st.title("🧠 Smart AI Excel Summarizer & Executive Insights")
-st.caption("Upload file Excel mentah. Sistem akan membuat Pivot Table kustom, grafik, dan AI akan menyusun Executive Summary otomatis.")
+st.title("🧠 Smart AI Excel Summarizer Pro Studio")
+st.caption("Upload file Excel mentah, bersihkan data, filter interaktif, obrolkan data dengan AI, buat pivot & grafik kustom, lalu unduh laporan PDF/Excel.")
 
-st.sidebar.header("📁 Upload File Excel")
+st.sidebar.header("📁 1. Upload File Excel")
 uploaded_file = st.sidebar.file_uploader("Pilih File (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
     if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
+        df_raw = pd.read_csv(uploaded_file)
     else:
         excel_file = pd.ExcelFile(uploaded_file)
         selected_sheet = st.sidebar.selectbox("Pilih Sheet", excel_file.sheet_names)
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+        df_raw = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
 
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    # ---------------------------------------------------------
+    # FITUR 3: AUTO DATA CLEANING
+    # ---------------------------------------------------------
+    st.sidebar.divider()
+    st.sidebar.header("🧹 2. Data Cleaning")
+    auto_clean = st.sidebar.checkbox("Aktifkan Auto-Cleaning", value=True)
+    
+    df = df_raw.copy()
+    if auto_clean:
+        # Hapus baris duplikat & potong spasi berlebih pada kolom teks
+        df = df.drop_duplicates()
+        str_cols = df.select_dtypes(include=['object']).columns
+        for col in str_cols:
+            df[col] = df[col].astype(str).str.strip()
+
+    # ---------------------------------------------------------
+    # FITUR 1: DYNAMIC FILTER & RANGE TANGGAL
+    # ---------------------------------------------------------
+    st.sidebar.divider()
+    st.sidebar.header("🔍 3. Dynamic Filter")
+    
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    
+    # Deteksi Otomatis Kolom Tanggal
+    datetime_cols = []
+    for col in df.columns:
+        if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
+            try:
+                df[col] = pd.to_datetime(df[col])
+                datetime_cols.append(col)
+            except:
+                pass
 
-    tab1, tab2, tab3 = st.tabs(["🤖 AI Executive Summary", "🔀 Custom Pivot Table", "📌 Raw Data Preview"])
+    filtered_df = df.copy()
+    
+    # Filter Tanggal jika ada
+    if datetime_cols:
+        date_col_selected = st.sidebar.selectbox("Filter Kolom Tanggal:", datetime_cols)
+        min_date = filtered_df[date_col_selected].min().date()
+        max_date = filtered_df[date_col_selected].max().date()
+        
+        date_range = st.sidebar.date_input("Rentang Tanggal:", [min_date, max_date])
+        if len(date_range) == 2:
+            start_d, end_d = date_range
+            filtered_df = filtered_df[
+                (filtered_df[date_col_selected].dt.date >= start_d) & 
+                (filtered_df[date_col_selected].dt.date <= end_d)
+            ]
+
+    # Filter Kategori Opsional
+    if categorical_cols:
+        filter_cat_col = st.sidebar.selectbox("Filter Kategori Specific (Opsional):", ["-- Semua --"] + categorical_cols)
+        if filter_cat_col != "-- Semua --":
+            unique_vals = list(df[filter_cat_col].unique())
+            selected_vals = st.sidebar.multiselect(f"Pilih Nilai {filter_cat_col}:", unique_vals, default=unique_vals)
+            filtered_df = filtered_df[filtered_df[filter_cat_col].isin(selected_vals)]
+
+    # ---------------------------------------------------------
+    # TAB NAVIGASI UTAMA APLIKASI
+    # ---------------------------------------------------------
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🤖 AI Executive Summary", 
+        "💬 Talk to Data (Q&A)", 
+        "🔀 Custom Pivot & Charts Studio", 
+        "📌 Data Preview & Export"
+    ])
 
     # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
@@ -160,12 +242,12 @@ if uploaded_file:
             with c2:
                 val_col = st.selectbox("Metrik Utama (Angka):", numeric_cols)
                 
-            summary_df = df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
+            summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
             summary_df = summary_df.sort_values(by='sum', ascending=False)
             
-            if st.button("🚀 Hasikan AI Executive Summary", type="primary"):
-                with st.spinner("Groq AI sedang menganalisis data..."):
-                    ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}'."
+            if st.button("🚀 Hasilkan AI Executive Summary", type="primary"):
+                with st.spinner("Groq AI sedang menganalisis data terfilter..."):
+                    ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
                     data_str = summary_df.head(15).to_string(index=False)
                     res = get_ai_insight(data_str, ctx)
                     
@@ -190,25 +272,97 @@ if uploaded_file:
         else:
             st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom angka.")
 
-    # --- TAB 2: CUSTOM PIVOT STUDIO ---
+    # --- TAB 2: FITUR CHAT / TALK TO DATA ---
     with tab2:
-        st.subheader("🔀 Custom Pivot Studio")
-        p_rows = st.multiselect("Rows (Baris):", df.columns.tolist(), default=[categorical_cols[0]] if categorical_cols else [])
-        p_vals = st.selectbox("Values (Nilai):", numeric_cols if numeric_cols else df.columns.tolist())
-        p_agg = st.selectbox("Fungsi Agregasi:", ["sum", "mean", "count", "min", "max"])
+        st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
+        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Siapa Top 3 Customer terbanyak?', 'Berapa total penjualan?')")
         
+        # Inisialisasi Riwayat Chat
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+            
+        # Tampilkan riwayat chat
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                
+        user_prompt = st.chat_input("Ketik pertanyaan Anda tentang data ini...")
+        if user_prompt:
+            st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+            with st.chat_message("user"):
+                st.markdown(user_prompt)
+                
+            with st.chat_message("assistant"):
+                with st.spinner("Membaca data dan berpikir..."):
+                    # Buat sampel konteks data singkat untuk AI
+                    data_sample = filtered_df.describe(include='all').to_string()
+                    ai_response = ask_data_chat(data_sample, user_prompt)
+                    st.markdown(ai_response)
+                    
+            st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
+
+    # --- TAB 3: FITUR CHART SELECTOR & PIVOT STUDIO ---
+    with tab3:
+        st.subheader("🔀 Custom Pivot & Dynamic Chart Studio")
+        
+        c_p1, c_p2, c_p3 = st.columns(3)
+        with c_p1:
+            p_rows = st.multiselect("Rows (Baris):", filtered_df.columns.tolist(), default=[categorical_cols[0]] if categorical_cols else [])
+        with c_p2:
+            p_vals = st.selectbox("Values (Nilai):", numeric_cols if numeric_cols else filtered_df.columns.tolist())
+        with c_p3:
+            p_agg = st.selectbox("Fungsi Agregasi:", ["sum", "mean", "count", "min", "max"])
+            
         if p_rows and p_vals:
-            p_res = pd.pivot_table(df, index=p_rows, values=p_vals, aggfunc=p_agg).reset_index()
+            p_res = pd.pivot_table(filtered_df, index=p_rows, values=p_vals, aggfunc=p_agg).reset_index()
             st.dataframe(p_res, use_container_width=True)
             
-            fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
+            # FITUR 5: PEMILIH JENIS GRAFIK (DYNAMIC CHART SELECTOR)
+            st.divider()
+            st.write("### 📊 Visualisasi Grafik")
+            chart_type = st.radio("Pilih Jenis Grafik:", ["Bar Chart", "Line Chart", "Pie Chart", "Scatter Plot"], horizontal=True)
+            
+            if chart_type == "Bar Chart":
+                fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
+            elif chart_type == "Line Chart":
+                fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
+            elif chart_type == "Pie Chart":
+                fig = px.pie(p_res, names=p_rows[0], values=p_vals, title=f"Proporsi {p_vals} per {p_rows[0]}")
+            elif chart_type == "Scatter Plot":
+                fig = px.scatter(p_res, x=p_rows[0], y=p_vals, size=p_vals, title=f"Sebaran {p_vals} per {p_rows[0]}")
+                
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- TAB 3: PREVIEW DATA ---
-    with tab3:
-        st.subheader("Raw Data Preview")
-        st.write(f"Total Baris: **{len(df)}** | Total Kolom: **{len(df.columns)}**")
-        st.dataframe(df, use_container_width=True)
+    # --- TAB 4: PREVIEW DATA & EXPORT EXCEL ---
+    with tab4:
+        st.subheader("📌 Data Preview & Export Excel")
+        st.write(f"Total Baris Data Terfilter: **{len(filtered_df)}** (Dari Total Raw: **{len(df_raw)}**)")
+        st.dataframe(filtered_df, use_container_width=True)
+        
+        st.divider()
+        st.write("### 📥 Unduh Data Hasil Cleaning & Filter")
+        
+        col_ex1, col_ex2 = st.columns(2)
+        with col_ex1:
+            # Download CSV
+            csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Unduh Data (CSV)",
+                data=csv_data,
+                file_name="data_filtered.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with col_ex2:
+            # Download Excel .xlsx
+            excel_data = convert_df_to_excel(filtered_df)
+            st.download_button(
+                label="📊 Unduh Data Rapi (.xlsx)",
+                data=excel_data,
+                file_name="data_filtered.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
 else:
-    st.info("💡 Silakan upload file Excel di sidebar kiri untuk memulai.")
+    st.info("💡 Silakan upload file Excel di sidebar kiri untuk mulai menggunakan Studio.")
