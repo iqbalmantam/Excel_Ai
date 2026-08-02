@@ -11,53 +11,26 @@ from groq import Groq
 st.set_page_config(
     page_title="Smart AI Excel Summarizer Studio",
     page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # ---------------------------------------------------------
-# 2. CUSTOM CSS: HIDE ALL HEADER CONTENT (FORK, GITHUB, ETC)
+# 2. CUSTOM CSS: HIDE ALL HEADER CONTENT (CLEAN LOOK)
 # ---------------------------------------------------------
 hide_streamlit_style = """
             <style>
-            /* Sembunyikan seluruh isi header bawaan Streamlit (Fork, Github, Share, dll) */
             header[data-testid="stHeader"] {
-                background: transparent !important;
-                height: 0px !important;
-                min-height: 0px !important;
-            }
-            
-            /* Sembunyikan semua tombol di dalam header */
-            header[data-testid="stHeader"] > div {
                 display: none !important;
             }
-
-            /* Tetap sembunyikan menu & footer */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
-            
-            /* Tampilkan dan posisikan tombol toggle sidebar di pojok kiri atas */
-            [data-testid="stSidebarCollapseButton"], 
-            button[aria-label="Open sidebar"],
-            button[aria-label="Close sidebar"] {
-                visibility: visible !important;
-                display: flex !important;
-                position: fixed !important;
-                top: 12px !important;
-                left: 12px !important;
-                z-index: 999999 !important;
-                background-color: #ffffff !important;
-                border: 1px solid #e0e0e0 !important;
-                border-radius: 8px !important;
-                box-shadow: 0px 2px 4px rgba(0,0,0,0.1) !important;
-            }
             
             .created-by {
                 text-align: right;
                 color: #6c757d;
                 font-size: 0.9rem;
                 font-weight: bold;
-                margin-top: 10px;
+                margin-top: -10px;
                 margin-bottom: 20px;
                 border-bottom: 1px solid #e9ecef;
                 padding-bottom: 8px;
@@ -139,7 +112,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
-    pdf.set_font("Helvetica", size=8.5)
+    pdf.set_font("Helvetica", style="B", size=8.5)
     clean_text = ai_insight.replace("*", "").replace("#", "")
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
@@ -177,73 +150,70 @@ def convert_df_to_excel(df):
     return output
 
 # ---------------------------------------------------------
-# 5. JUDUL APLIKASI & UPLOAD DATA
+# 5. JUDUL APLIKASI & UPLOAD DATA LANGSUNG DI HALAMAN UTAMA
 # ---------------------------------------------------------
 st.title("🧠 Smart AI Excel Summarizer Pro Studio")
 st.caption("Upload file Excel mentah, bersihkan data, filter interaktif, obrolkan data dengan AI, buat pivot & grafik kustom, lalu unduh laporan PDF/Excel.")
 
-st.sidebar.header("📁 1. Upload File Excel")
-uploaded_file = st.sidebar.file_uploader("Pilih File (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
+# UPLOAD FILE DI HALAMAN UTAMA (TIDAK PERLU SIDEBAR)
+st.write("---")
+uploaded_file = st.file_uploader("📁 Pilih & Upload File Excel (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
     if uploaded_file.name.endswith('.csv'):
         df_raw = pd.read_csv(uploaded_file)
     else:
         excel_file = pd.ExcelFile(uploaded_file)
-        selected_sheet = st.sidebar.selectbox("Pilih Sheet", excel_file.sheet_names)
+        selected_sheet = st.selectbox("📄 Pilih Sheet Excel", excel_file.sheet_names)
         df_raw = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
 
-    # --- AUTO DATA CLEANING ---
-    st.sidebar.divider()
-    st.sidebar.header("🧹 2. Data Cleaning")
-    auto_clean = st.sidebar.checkbox("Aktifkan Auto-Cleaning", value=True)
-    
-    df = df_raw.copy()
-    if auto_clean:
-        df = df.drop_duplicates()
-        str_cols = df.select_dtypes(include=['object']).columns
-        for col in str_cols:
-            df[col] = df[col].astype(str).str.strip()
+    # --- EXPANDER UTILS: DATA CLEANING & FILTER ---
+    with st.expander("🛠️ Pengaturan Filter & Data Cleaning (Opsional)", expanded=False):
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            auto_clean = st.checkbox("🧹 Aktifkan Auto-Cleaning (Hapus Duplikat & Trim Spasi)", value=True)
+            
+        df = df_raw.copy()
+        if auto_clean:
+            df = df.drop_duplicates()
+            str_cols = df.select_dtypes(include=['object']).columns
+            for col in str_cols:
+                df[col] = df[col].astype(str).str.strip()
 
-    # --- DYNAMIC FILTER & RANGE TANGGAL ---
-    st.sidebar.divider()
-    st.sidebar.header("🔍 3. Dynamic Filter")
-    
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    
-    datetime_cols = []
-    for col in df.columns:
-        if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
-            try:
-                df[col] = pd.to_datetime(df[col])
-                datetime_cols.append(col)
-            except:
-                pass
-
-    filtered_df = df.copy()
-    
-    if datetime_cols:
-        date_col_selected = st.sidebar.selectbox("Filter Kolom Tanggal:", datetime_cols)
-        min_date = filtered_df[date_col_selected].min().date()
-        max_date = filtered_df[date_col_selected].max().date()
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         
-        date_range = st.sidebar.date_input("Rentang Tanggal:", [min_date, max_date])
-        if len(date_range) == 2:
-            start_d, end_d = date_range
-            filtered_df = filtered_df[
-                (filtered_df[date_col_selected].dt.date >= start_d) & 
-                (filtered_df[date_col_selected].dt.date <= end_d)
-            ]
+        datetime_cols = []
+        for col in df.columns:
+            if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
+                try:
+                    df[col] = pd.to_datetime(df[col])
+                    datetime_cols.append(col)
+                except:
+                    pass
 
-    if categorical_cols:
-        filter_cat_col = st.sidebar.selectbox("Filter Kategori Specific (Opsional):", ["-- Semua --"] + categorical_cols)
-        if filter_cat_col != "-- Semua --":
-            unique_vals = list(df[filter_cat_col].unique())
-            selected_vals = st.sidebar.multiselect(f"Pilih Nilai {filter_cat_col}:", unique_vals, default=unique_vals)
-            filtered_df = filtered_df[filtered_df[filter_cat_col].isin(selected_vals)]
+        filtered_df = df.copy()
+        
+        with col_c2:
+            if datetime_cols:
+                date_col_selected = st.selectbox("Filter Kolom Tanggal:", datetime_cols)
+                min_date = filtered_df[date_col_selected].min().date()
+                max_date = filtered_df[date_col_selected].max().date()
+                date_range = st.date_input("Rentang Tanggal:", [min_date, max_date])
+                if len(date_range) == 2:
+                    start_d, end_d = date_range
+                    filtered_df = filtered_df[
+                        (filtered_df[date_col_selected].dt.date >= start_d) & 
+                        (filtered_df[date_col_selected].dt.date <= end_d)
+                    ]
+
+    if 'filtered_df' not in locals():
+        filtered_df = df_raw.copy()
+        categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
+        numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
 
     # --- TAB NAVIGASI UTAMA ---
+    st.write("---")
     tab1, tab2, tab3, tab4 = st.tabs([
         "🤖 AI Executive Summary", 
         "💬 Talk to Data (Q&A)", 
@@ -378,4 +348,4 @@ if uploaded_file:
             )
 
 else:
-    st.info("💡 Silakan upload file Excel di sidebar kiri untuk mulai menggunakan Studio.")
+    st.info("💡 Silakan klik tombol 'Pilih & Upload File Excel' di atas untuk memulai.")
