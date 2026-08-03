@@ -81,7 +81,12 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Helper kolom angka jika data kualitatif tanpa angka
+    # Konversi otomatis kolom angka yang masih terbaca string
+    for col in df_clean.columns:
+        if col.lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total']:
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+
+    # Helper kolom angka jika data kualitatif tanpa angka murni
     num_cols = df_clean.select_dtypes(include=['number']).columns
     if len(num_cols) == 0:
         df_clean['Jumlah_Data'] = 1
@@ -89,7 +94,7 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
     return df_clean
 
 # ---------------------------------------------------------
-# 4. INITIALIZATION GROQ API & AI ENGINE (PROMPT UNIVERSAL)
+# 4. INITIALIZATION GROQ API & AI ENGINE
 # ---------------------------------------------------------
 api_key = st.secrets.get("GROQ_API_KEY", None)
 
@@ -119,7 +124,7 @@ def get_ai_insight(df_summary_str, context_info, cache_key=None):
         4. **Strategic Recommendations**: Langkah operasional/bisnis konkret yang disarankan.
         5. **Management Conclusion**: Kesimpulan ringkas untuk manajemen.
         
-        Gunakan bahasa Indonesia profesional, terstruktur, dan tepat sasaran tanpa mengasumsikan ini data SDM kecuali jika datanya tentang SDM.
+        Gunakan bahasa Indonesia profesional, terstruktur, dan tepat sasaran.
         """
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -208,7 +213,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
-    pdf.set_font("Helvetica", size=8.5)
+    pdf.set_font("Helvetica", style="B", size=8.5)
     clean_text = clean_latin_text(ai_insight.replace("*", "").replace("#", ""))
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
@@ -315,8 +320,20 @@ if uploaded_file:
                     if selected_opts:
                         filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
 
+    # Pemisahan kolom kategori & numerik secara ketat
     categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
     numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
+
+    # Filter tambahan: Jangan masukkan kolom ID/Kode Unik bertipe integer jika banyak ke numeric_cols
+    valid_numeric_cols = []
+    for c in numeric_cols:
+        if 'id' not in c.lower() and 'code' not in c.lower() and 'no' not in c.lower():
+            valid_numeric_cols.append(c)
+        elif filtered_df[c].nunique() < len(filtered_df):
+            valid_numeric_cols.append(c)
+            
+    if not valid_numeric_cols:
+        valid_numeric_cols = numeric_cols if numeric_cols else ['Jumlah_Data']
 
     # ---------------------------------------------------------
     # DASHBOARD KPI CARDS & STATISTIK CEPAT
@@ -329,11 +346,11 @@ if uploaded_file:
     kpi_col3.metric("Missing Values", f"{filtered_df.isna().sum().sum():,}")
     kpi_col4.metric("Baris Duplikat", f"{filtered_df.duplicated().sum():,}")
     
-    if numeric_cols:
-        main_num = numeric_cols[0]
+    main_num = valid_numeric_cols[0] if valid_numeric_cols else None
+    if main_num and main_num in filtered_df.columns:
         kpi_col5.metric(f"Total {main_num}", f"{filtered_df[main_num].sum():,.0f}")
     else:
-        kpi_col5.metric("Kolom Numerik", "0")
+        kpi_col5.metric("Kolom Numerik", f"{len(valid_numeric_cols)}")
 
     # ---------------------------------------------------------
     # ONE CLICK ANALYZE
@@ -342,10 +359,10 @@ if uploaded_file:
     if st.button("⚡ One-Click Auto Analyze & Generate Full Report", type="primary", use_container_width=True):
         if len(filtered_df) == 0:
             st.error("Data terfilter kosong. Harap sesuaikan kembali opsi filter Anda.")
-        elif categorical_cols and numeric_cols:
+        elif categorical_cols and valid_numeric_cols:
             with st.spinner("Menjalankan analisis otomatis 360 derajat..."):
                 auto_cat = categorical_cols[0]
-                auto_num = numeric_cols[0]
+                auto_num = valid_numeric_cols[0]
                 auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'count']).reset_index().sort_values(by='sum', ascending=False)
                 
                 ckey = f"{auto_cat}_{auto_num}_oneclick"
@@ -374,12 +391,18 @@ if uploaded_file:
         st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if len(filtered_df) == 0:
             st.warning("Data terfilter kosong. Harap sesuaikan opsi filter Anda.")
-        elif categorical_cols and numeric_cols:
+        elif categorical_cols and valid_numeric_cols:
             c1, c2 = st.columns(2)
             with c1:
                 group_col = st.selectbox("Dimensi Kategori (Kolom Teks):", categorical_cols, key="tab1_cat")
             with c2:
-                val_col = st.selectbox("Metrik Utama (Kolom Angka):", numeric_cols, key="tab1_num")
+                # Default diprioritaskan ke Qty jika ada
+                default_idx = 0
+                for idx, col_name in enumerate(valid_numeric_cols):
+                    if col_name.lower() in ['qty', 'quantity', 'jumlah']:
+                        default_idx = idx
+                        break
+                val_col = st.selectbox("Metrik Utama (Kolom Angka):", valid_numeric_cols, index=default_idx, key="tab1_num")
                 
             summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
             summary_df = summary_df.sort_values(by='sum', ascending=False)
@@ -449,7 +472,7 @@ if uploaded_file:
         with c_p1:
             p_rows = st.multiselect("Rows (Baris/Kategori):", categorical_cols if categorical_cols else filtered_df.columns.tolist(), default=[categorical_cols[0]] if categorical_cols else [])
         with c_p2:
-            p_vals = st.selectbox("Values (Nilai Metrik):", numeric_cols if numeric_cols else filtered_df.columns.tolist())
+            p_vals = st.selectbox("Values (Nilai Metrik):", valid_numeric_cols if valid_numeric_cols else filtered_df.columns.tolist())
         with c_p3:
             p_agg = st.selectbox("Fungsi Agregasi:", ["sum", "count", "mean", "min", "max"])
             
