@@ -111,20 +111,24 @@ def get_ai_insight(df_summary_str, context_info, cache_key=None):
         client = Groq(api_key=api_key)
         prompt = f"""
         Anda adalah Senior Business Intelligence Consultant & Data Strategist profesional.
-        Analisis data ringkasan berikut secara objektif dan mendalam.
+        Analisis data ringkasan berikut secara objektif, teliti, dan logis.
         
         Konteks Data: {context_info}
         Ringkasan Data:
         {df_summary_str}
         
+        PENTING HARUS DIPERHATIKAN:
+        - Perhatikan angka secara seksama. Angka total atau rata-rata yang lebih besar HARUS dinyatakan lebih tinggi secara benar dan konsisten.
+        - Jangan salah membandingkan dua nilai (misalnya: angka 58.000 lebih besar daripada 46.498, maka 58.000 adalah yang tertinggi).
+        
         Susunlah analisis eksekutif profesional sesuai jenis datanya (Inventaris, Penjualan, Operasional, SDM, atau Keuangan):
-        1. **Executive Summary**: Gambaran umum performa data & agregasi utama.
-        2. **Key Insights & Trends**: Temuan krusial, porsi kontribusi terbesar, atau pola signifikan.
+        1. **Executive Summary**: Gambaran umum performa data & agregasi utama (pastikan perbandingan angka 100% akurat).
+        2. **Key Insights & Trends**: Temuan krusial, porsi kontribusi terbesar, atau perbedaan signifikan antara frekuensi (count) dan volume per entri (mean).
         3. **Outliers & Anomalies**: Lonjakan, konsentrasi yang tidak seimbang, atau potensi kendala.
         4. **Strategic Recommendations**: Langkah operasional/bisnis konkret yang disarankan.
         5. **Management Conclusion**: Kesimpulan ringkas untuk manajemen.
         
-        Gunakan bahasa Indonesia profesional, terstruktur, dan tepat sasaran.
+        Gunakan bahasa Indonesia profesional, terstruktur, dan akurat secara matematis.
         """
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -147,12 +151,12 @@ def prepare_advanced_data_context(df):
         for cat in categorical_cols[:5]:
             top_counts = df[cat].value_counts().head(10).reset_index()
             top_counts.columns = [cat, 'Jumlah']
-            ctx.append(f"\n--- DISTRIBUSI TOP 10 {cat.upper()} ---")
+            ctx.append(f"\n--- DISTRIBUSI TOP 10 {cat.upper()} ---\n")
             ctx.append(top_counts.to_string(index=False))
 
     if numeric_cols:
         stats = df[numeric_cols[:3]].describe().T[['mean', 'min', 'max', '50%']]
-        ctx.append("\n--- STATISTIK HIMPUNAN ANGKA UTAMA ---")
+        ctx.append("\n--- STATISTIK HIMPUNAN ANGKA UTAMA ---\n")
         ctx.append(stats.to_string())
                 
     return "\n".join(ctx)
@@ -179,6 +183,7 @@ def ask_data_chat(df, user_query):
         
         Petunjuk Jawaban:
         - Jawab secara akurat, lugas, dan berikan tabel Markdown jika menyajikan ranking/daftar.
+        - Perhatikan akurasi angka secara matematis.
         - Sesuaikan konteks jawaban dengan jenis datanya (Penjualan, Inventaris/Inbound, SDM, dll).
         """
         
@@ -324,7 +329,7 @@ if uploaded_file:
     categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
     numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
 
-    # Filter tambahan: Jangan masukkan kolom ID/Kode Unik bertipe integer jika banyak ke numeric_cols
+    # Filter tambahan: Eliminasi kolom ID/Kode Unik bertipe integer
     valid_numeric_cols = []
     for c in numeric_cols:
         if 'id' not in c.lower() and 'code' not in c.lower() and 'no' not in c.lower():
@@ -363,7 +368,7 @@ if uploaded_file:
             with st.spinner("Menjalankan analisis otomatis 360 derajat..."):
                 auto_cat = categorical_cols[0]
                 auto_num = valid_numeric_cols[0]
-                auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'count']).reset_index().sort_values(by='sum', ascending=False)
+                auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'mean', 'count']).reset_index().sort_values(by='sum', ascending=False)
                 
                 ckey = f"{auto_cat}_{auto_num}_oneclick"
                 auto_res = get_ai_insight(auto_sum.head(15).to_string(index=False), f"Analisis Otomatis Dimensi '{auto_cat}' terhadap Metrik '{auto_num}'", cache_key=ckey)
@@ -396,7 +401,6 @@ if uploaded_file:
             with c1:
                 group_col = st.selectbox("Dimensi Kategori (Kolom Teks):", categorical_cols, key="tab1_cat")
             with c2:
-                # Default diprioritaskan ke Qty jika ada
                 default_idx = 0
                 for idx, col_name in enumerate(valid_numeric_cols):
                     if col_name.lower() in ['qty', 'quantity', 'jumlah']:
@@ -409,7 +413,7 @@ if uploaded_file:
             
             cache_key = f"{group_col}_{val_col}_{len(filtered_df)}"
             
-            if st.button("🚀 Hasilkan AI Executive Summary", type="secondary"):
+            if st.button("🚀 Hasikan AI Executive Summary", type="secondary"):
                 with st.spinner("Groq AI sedang menganalisis data..."):
                     ctx = f"Analisis Kategori '{group_col}' berdasarkan Metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
                     data_str = summary_df.head(15).to_string(index=False)
