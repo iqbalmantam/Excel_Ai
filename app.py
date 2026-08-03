@@ -9,7 +9,7 @@ from groq import Groq
 # 1. KONFIGURASI HALAMAN
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Smart AI Excel Summarizer Pro Studio",
+    page_title="Smart AI Excel Summarizer Studio",
     page_icon="🧠",
     layout="wide"
 )
@@ -43,11 +43,11 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. CACHED DATA LOADING & CLEANING (POIN 1, 2, 12, 19)
+# 3. CACHED DATA LOADING & CLEANING
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_excel_data(file, sheet_name=None):
-    """Membaca file Excel/CSV satu kali dengan efisien tanpa re-read."""
+    """Membaca file Excel/CSV satu kali dengan efisien."""
     try:
         if file.name.endswith('.csv'):
             return pd.read_csv(file)
@@ -61,8 +61,15 @@ def load_excel_data(file, sheet_name=None):
 
 @st.cache_data(show_spinner=False)
 def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_dups=True):
-    """Auto Cleaning Lanjutan: Trim, Case Format, Drop Duplicates, Parse Type."""
+    """Auto Cleaning Lanjutan: Penanganan Nama Kolom Duplikat, Trim, Case Format, Drop Duplicates."""
     df_clean = df.copy()
+    
+    # Penanganan Kolom Duplikat
+    cols = pd.Series(df_clean.columns)
+    for dup in cols[cols.duplicated()].unique():
+        cols[cols == dup] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
+    df_clean.columns = cols
+
     if drop_dups:
         df_clean = df_clean.drop_duplicates()
     
@@ -78,7 +85,7 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
     return df_clean
 
 # ---------------------------------------------------------
-# 4. INITIALIZATION GROQ API & AI ENGINE (POIN 3, 4, 5, 17)
+# 4. INITIALIZATION GROQ API & AI ENGINE
 # ---------------------------------------------------------
 api_key = st.secrets.get("GROQ_API_KEY", None)
 
@@ -86,7 +93,6 @@ if "summary_cache" not in st.session_state:
     st.session_state.summary_cache = {}
 
 def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
-    """Fungsi AI dengan Caching & Professional Prompting."""
     if cache_key and cache_key in st.session_state.summary_cache:
         return st.session_state.summary_cache[cache_key]
 
@@ -124,7 +130,6 @@ def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
 def prepare_advanced_data_context(df):
-    """Menghitung agregasi pra-analisis komprehensif untuk dikirim ke Chat AI."""
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     
@@ -132,13 +137,11 @@ def prepare_advanced_data_context(df):
     ctx.append(f"TOTAL ROWS: {len(df)} | TOTAL COLS: {len(df.columns)}")
     ctx.append(f"MISSING VALUES TOTAL: {df.isna().sum().sum()} | DUPLICATES: {df.duplicated().sum()}")
     
-    # Statistik Angka
     if numeric_cols:
         stats = df[numeric_cols].agg(['sum', 'mean', 'median', 'min', 'max', 'std']).T
         ctx.append("\n--- STATISTIK NUMERIK (Sum, Mean, Median, Min, Max, Std) ---")
         ctx.append(stats.to_markdown())
         
-    # Agregasi Kategori Utama
     if categorical_cols and numeric_cols:
         for cat in categorical_cols[:3]:
             for num in numeric_cols[:2]:
@@ -153,7 +156,6 @@ def prepare_advanced_data_context(df):
     return "\n".join(ctx)
 
 def ask_data_chat(df, user_query):
-    """Chat AI cerdas dengan Konteks Preprocessing Lengkap."""
     if not api_key:
         return "⚠️ GROQ_API_KEY tidak terdeteksi."
     try:
@@ -188,10 +190,9 @@ def ask_data_chat(df, user_query):
         return f"Gagal menjawab pertanyaan: {str(e)}"
 
 # ---------------------------------------------------------
-# 5. HELPER EXPORT PDF & EXCEL (POIN 6, 13)
+# 5. HELPER EXPORT PDF & EXCEL
 # ---------------------------------------------------------
 def clean_latin_text(text):
-    """Sanitizer string untuk mencegah Unicode error pada FPDF font latin."""
     replacements = {
         '—': '-', '–': '-', '“': '"', '”': '"', '‘': "'", '’': "'",
         '…': '...', '•': '*', '™': 'TM', '®': '(R)', '©': '(C)'
@@ -201,17 +202,14 @@ def clean_latin_text(text):
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 def generate_smart_pdf(title, ai_insight, df_summary):
-    """Membuat laporan PDF aman Unicode."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Title
     pdf.set_font("Helvetica", style="B", size=15)
     pdf.cell(0, 10, clean_latin_text(title), ln=True, align="C")
     pdf.ln(5)
     
-    # AI Summary
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
     pdf.set_font("Helvetica", size=8.5)
@@ -219,7 +217,6 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
     
-    # Table Data
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(0, 8, "Data Summary Table", ln=True)
     
@@ -261,7 +258,6 @@ st.write("---")
 uploaded_file = st.file_uploader("📁 Pilih & Upload File Excel (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
-    # Progress Bar pembacaan file (Poin 18)
     progress_bar = st.progress(0, text="Membaca file Excel...")
     
     sheet_name = None
@@ -305,7 +301,7 @@ if uploaded_file:
         filtered_df = df.copy()
         
         with col_c2:
-            st.write("**:mag: Dynamic Multi-Column Filters (Poin 9)**")
+            st.write("**:mag: Dynamic Multi-Column Filters**")
             if datetime_cols:
                 date_col_selected = st.selectbox("Filter Kolom Tanggal:", datetime_cols)
                 min_date = filtered_df[date_col_selected].min().date()
@@ -318,16 +314,15 @@ if uploaded_file:
                         (filtered_df[date_col_selected].dt.date <= end_d)
                     ]
 
-            # Dynamic Filter untuk SEMUA Kolom Kategori (Poin 9)
             if categorical_cols:
-                for cat_col in categorical_cols[:5]: # Batasi 5 kategori pertama agar tidak overwhelming
+                for cat_col in categorical_cols[:5]:
                     unique_opts = list(df[cat_col].unique())
                     selected_opts = st.multiselect(f"Filter {cat_col}:", unique_opts, default=[])
                     if selected_opts:
                         filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
 
     # ---------------------------------------------------------
-    # DASHBOARD KPI CARDS & STATISTIK CEPAT (POIN 10, 14)
+    # DASHBOARD KPI CARDS & STATISTIK CEPAT
     # ---------------------------------------------------------
     st.write("### 📌 Executive KPI Dashboard")
     kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
@@ -344,7 +339,7 @@ if uploaded_file:
         kpi_col5.metric("Kolom Numerik", "0")
 
     # ---------------------------------------------------------
-    # TOMBOL MODE OTOMATIS / ONE CLICK ANALYZE (POIN 20)
+    # ONE CLICK ANALYZE
     # ---------------------------------------------------------
     st.write("")
     if st.button("⚡ One-Click Auto Analyze & Generate Full Report", type="primary", use_container_width=True):
@@ -375,7 +370,7 @@ if uploaded_file:
         "📌 Raw Data & Export"
     ])
 
-    # --- TAB 1: AI EXECUTIVE SUMMARY (POIN 3, 5, 17) ---
+    # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
         st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if categorical_cols and numeric_cols:
@@ -390,10 +385,9 @@ if uploaded_file:
             
             cache_key = f"{group_col}_{val_col}_{len(filtered_df)}"
             
-            if st.button("🚀 Hasilkan AI Executive Summary", type="secondary"):
+            if st.button("🚀 Hasikan AI Executive Summary", type="secondary"):
                 with st.spinner("Groq AI sedang menganalisis data terfilter..."):
                     ctx = f"Analisis dimensi '{group_col}' terhadap metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
-                    # Mengirim format Markdown (Poin 3)
                     data_md = summary_df.head(15).to_markdown(index=False)
                     res = get_ai_insight(data_md, ctx, cache_key=cache_key)
                     
@@ -418,7 +412,7 @@ if uploaded_file:
         else:
             st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom angka.")
 
-    # --- TAB 2: CHAT / TALK TO DATA (POIN 4, 16) ---
+    # --- TAB 2: CHAT / TALK TO DATA ---
     with tab2:
         st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
         st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Tampilkan top ten customer tertinggi', 'Berapa total sales Januari?')")
@@ -426,7 +420,6 @@ if uploaded_file:
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
             
-        # Poin 16: Batasi riwayat chat max 20 agar memori ringan
         if len(st.session_state.chat_history) > 20:
             st.session_state.chat_history = st.session_state.chat_history[-20:]
             
@@ -447,7 +440,7 @@ if uploaded_file:
                     
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
 
-    # --- TAB 3: CHART SELECTOR & PIVOT STUDIO (POIN 7, 8, 13) ---
+    # --- TAB 3: CHART SELECTOR & PIVOT STUDIO ---
     with tab3:
         st.subheader("🔀 Custom Pivot & Dynamic Chart Studio")
         
@@ -460,46 +453,47 @@ if uploaded_file:
             p_agg = st.selectbox("Fungsi Agregasi:", ["sum", "mean", "count", "min", "max"])
             
         if p_rows and p_vals:
-            p_res = pd.pivot_table(filtered_df, index=p_rows, values=p_vals, aggfunc=p_agg).reset_index()
-            st.dataframe(p_res, use_container_width=True)
-            
-            st.divider()
-            st.write("### 📊 Visualisasi Grafik")
-            
-            # Poin 8: Scatter Plot hanya jika ada minimal 2 kolom numerik
-            available_charts = ["Bar Chart", "Line Chart", "Pie Chart"]
-            if len(numeric_cols) >= 2:
-                available_charts.append("Scatter Plot")
+            try:
+                p_res = pd.pivot_table(filtered_df, index=p_rows, values=p_vals, aggfunc=p_agg).reset_index()
+                st.dataframe(p_res, use_container_width=True)
                 
-            chart_type = st.radio("Pilih Jenis Grafik:", available_charts, horizontal=True)
-            
-            fig = None
-            if chart_type == "Bar Chart":
-                fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
-            elif chart_type == "Line Chart":
-                fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
-            elif chart_type == "Pie Chart":
-                # Poin 7: Mencegah Pie Chart crash jika kategori > 20
-                if len(p_res) > 20:
-                    st.warning("⚠️ Kategori lebih dari 20 item. Pie Chart otomatis membatasi ke Top 10 kategori terbesar agar grafik terbaca.")
-                    p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
-                else:
-                    p_res_pie = p_res
-                fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi Top {p_vals} per {p_rows[0]}")
-            elif chart_type == "Scatter Plot" and len(numeric_cols) >= 2:
-                num_y = st.selectbox("Pilih Metrik Y (Scatter Plot):", numeric_cols, index=1 if len(numeric_cols)>1 else 0)
-                fig = px.scatter(filtered_df, x=p_vals, y=num_y, color=p_rows[0] if p_rows else None, title=f"Scatter Plot: {p_vals} vs {num_y}")
+                st.divider()
+                st.write("### 📊 Visualisasi Grafik")
                 
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                available_charts = ["Bar Chart", "Line Chart", "Pie Chart"]
+                if len(numeric_cols) >= 2:
+                    available_charts.append("Scatter Plot")
+                    
+                chart_type = st.radio("Pilih Jenis Grafik:", available_charts, horizontal=True)
+                
+                fig = None
+                if chart_type == "Bar Chart":
+                    fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
+                elif chart_type == "Line Chart":
+                    fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
+                elif chart_type == "Pie Chart":
+                    if len(p_res) > 20:
+                        st.warning("⚠️ Kategori lebih dari 20 item. Pie Chart otomatis membatasi ke Top 10 kategori terbesar agar grafik terbaca.")
+                        p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
+                    else:
+                        p_res_pie = p_res
+                    fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi Top {p_vals} per {p_rows[0]}")
+                elif chart_type == "Scatter Plot" and len(numeric_cols) >= 2:
+                    num_y = st.selectbox("Pilih Metrik Y (Scatter Plot):", numeric_cols, index=1 if len(numeric_cols)>1 else 0)
+                    fig = px.scatter(filtered_df, x=p_vals, y=num_y, color=p_rows[0] if p_rows else None, title=f"Scatter Plot: {p_vals} vs {num_y}")
+                    
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Gagal membuat Pivot Table: {str(e)}. Pastikan kolom yang dipilih tidak mengandung data yang tidak valid.")
 
-    # --- TAB 4: DATA PROFILING & MISSING VALUE REPORT (POIN 11, 15) ---
+    # --- TAB 4: DATA PROFILING & MISSING VALUE REPORT ---
     with tab4:
         st.subheader("📊 Data Profiling & Quality Report")
         
         prof_c1, prof_c2 = st.columns(2)
         with prof_c1:
-            st.write("**:mag: Missing Value Report (Poin 11)**")
+            st.write("**:mag: Missing Value Report**")
             null_df = pd.DataFrame({
                 'Kolom': filtered_df.columns,
                 'Missing Count': filtered_df.isna().sum().values,
@@ -508,7 +502,7 @@ if uploaded_file:
             st.dataframe(null_df, use_container_width=True)
             
         with prof_c2:
-            st.write("**:info: Dataset Overview & Memory (Poin 15)**")
+            st.write("**:info: Dataset Overview & Memory**")
             dtype_df = pd.DataFrame({
                 'Kolom': filtered_df.columns,
                 'Data Type': filtered_df.dtypes.astype(str).values,
