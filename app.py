@@ -48,6 +48,7 @@ st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow
 @st.cache_data(show_spinner=False)
 def load_excel_data(file, sheet_name=None):
     try:
+        file.seek(0)  # Pastikan pointer file berada di posisi awal
         if file.name.endswith('.csv'):
             return pd.read_csv(file)
         else:
@@ -80,7 +81,7 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Tambahkan kolom numerik helper jika data murni kualitatif/SDM
+    # Helper kolom angka untuk data kualitatif/SDM
     num_cols = df_clean.select_dtypes(include=['number']).columns
     if len(num_cols) == 0:
         df_clean['Jumlah_Karyawan'] = 1
@@ -95,7 +96,7 @@ api_key = st.secrets.get("GROQ_API_KEY", None)
 if "summary_cache" not in st.session_state:
     st.session_state.summary_cache = {}
 
-def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
+def get_ai_insight(df_summary_str, context_info, cache_key=None):
     if cache_key and cache_key in st.session_state.summary_cache:
         return st.session_state.summary_cache[cache_key]
 
@@ -108,8 +109,8 @@ def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
         Analisis data ringkasan berikut dari sebuah file data karyawan/organisasi.
         
         Konteks Data: {context_info}
-        Ringkasan Data (Tabel Markdown):
-        {df_summary_markdown}
+        Ringkasan Data:
+        {df_summary_str}
         
         Susunlah analisis eksekutif yang komprehensif, tajam, dan objektif:
         1. **Executive Summary**: Ringkasan komposisi SDM/karyawan.
@@ -132,7 +133,6 @@ def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
 def prepare_advanced_data_context(df):
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     
     ctx = []
@@ -143,7 +143,7 @@ def prepare_advanced_data_context(df):
             top_counts = df[cat].value_counts().head(10).reset_index()
             top_counts.columns = [cat, 'Jumlah']
             ctx.append(f"\n--- DISTRIBUSI TOP 10 {cat.upper()} ---")
-            ctx.append(top_counts.to_markdown(index=False))
+            ctx.append(top_counts.to_string(index=False))
                 
     return "\n".join(ctx)
 
@@ -154,7 +154,7 @@ def ask_data_chat(df, user_query):
         client = Groq(api_key=api_key)
         
         full_context = prepare_advanced_data_context(df)
-        sample_rows = df.head(15).to_markdown(index=False)
+        sample_rows = df.head(15).to_string(index=False)
         
         prompt = f"""
         Anda adalah Asisten Data Analyst SDM. Jawab pertanyaan pengguna berdasarkan data Excel berikut.
@@ -278,9 +278,6 @@ if uploaded_file:
             
         df = clean_data_advanced(df_raw, do_trim=do_trim, drop_dups=drop_dups) if auto_clean else df_raw.copy()
 
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        
         datetime_cols = []
         for col in df.columns:
             if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -306,12 +303,17 @@ if uploaded_file:
                         (filtered_df[date_col_selected].dt.date <= end_d)
                     ]
 
-            if categorical_cols:
-                for cat_col in categorical_cols[:5]:
+            cat_cols_raw = df.select_dtypes(include=['object', 'category']).columns.tolist()
+            if cat_cols_raw:
+                for cat_col in cat_cols_raw[:5]:
                     unique_opts = list(df[cat_col].unique())
                     selected_opts = st.multiselect(f"Filter {cat_col}:", unique_opts, default=[])
                     if selected_opts:
                         filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
+
+    # Merekam ulang tipe kolom dari filtered_df untuk menjamin sinkronisasi
+    categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
+    numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
 
     # ---------------------------------------------------------
     # DASHBOARD KPI CARDS & STATISTIK CEPAT
@@ -335,18 +337,22 @@ if uploaded_file:
     # ---------------------------------------------------------
     st.write("")
     if st.button("⚡ One-Click Auto Analyze & Generate Full Report", type="primary", use_container_width=True):
-        if categorical_cols and numeric_cols:
+        if len(filtered_df) == 0:
+            st.error("Data terfilter kosong. Harap sesuaikan kembali opsi filter Anda.")
+        elif categorical_cols and numeric_cols:
             with st.spinner("Menjalankan analisis otomatis 360 derajat..."):
                 auto_cat = categorical_cols[0]
                 auto_num = numeric_cols[0]
                 auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'count']).reset_index().sort_values(by='count', ascending=False)
                 
                 ckey = f"{auto_cat}_{auto_num}_oneclick"
-                auto_res = get_ai_insight(auto_sum.head(15).to_markdown(index=False), f"Analisis Otomatis '{auto_cat}'", cache_key=ckey)
+                auto_res = get_ai_insight(auto_sum.head(15).to_string(index=False), f"Analisis Otomatis '{auto_cat}'", cache_key=ckey)
                 
                 st.session_state['res'] = auto_res
                 st.session_state['data'] = auto_sum
                 st.success("✅ One-Click Analysis Selesai! Hasil dapat dilihat pada tab 'AI Executive Summary'.")
+        else:
+            st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom numerik untuk One-Click Analyze.")
 
     # ---------------------------------------------------------
     # TAB NAVIGASI UTAMA
@@ -363,7 +369,9 @@ if uploaded_file:
     # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
         st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
-        if categorical_cols and numeric_cols:
+        if len(filtered_df) == 0:
+            st.warning("Data terfilter kosong. Harap sesuaikan opsi filter Anda.")
+        elif categorical_cols and numeric_cols:
             c1, c2 = st.columns(2)
             with c1:
                 group_col = st.selectbox("Dimensi Kategori:", categorical_cols, key="tab1_cat")
@@ -378,8 +386,8 @@ if uploaded_file:
             if st.button("🚀 Hasikan AI Executive Summary", type="secondary"):
                 with st.spinner("Groq AI sedang menganalisis data terfilter..."):
                     ctx = f"Analisis dimensi '{group_col}' (Total data: {len(filtered_df)} baris)."
-                    data_md = summary_df.head(15).to_markdown(index=False)
-                    res = get_ai_insight(data_md, ctx, cache_key=cache_key)
+                    data_str = summary_df.head(15).to_string(index=False)
+                    res = get_ai_insight(data_str, ctx, cache_key=cache_key)
                     
                     st.session_state['res'] = res
                     st.session_state['data'] = summary_df
@@ -399,6 +407,8 @@ if uploaded_file:
                     file_name="AI_Executive_Report.pdf",
                     mime="application/pdf"
                 )
+        else:
+            st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom angka.")
 
     # --- TAB 2: CHAT / TALK TO DATA ---
     with tab2:
@@ -479,7 +489,7 @@ if uploaded_file:
             null_df = pd.DataFrame({
                 'Kolom': filtered_df.columns,
                 'Missing Count': filtered_df.isna().sum().values,
-                'Missing (%)': (filtered_df.isna().sum().values / len(filtered_df) * 100).round(2)
+                'Missing (%)': (filtered_df.isna().sum().values / max(len(filtered_df), 1) * 100).round(2)
             }).sort_values(by='Missing Count', ascending=False)
             st.dataframe(null_df, use_container_width=True)
             
