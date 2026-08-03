@@ -48,7 +48,7 @@ st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow
 @st.cache_data(show_spinner=False)
 def load_excel_data(file, sheet_name=None):
     try:
-        file.seek(0)  # Pastikan pointer file berada di posisi awal
+        file.seek(0)
         if file.name.endswith('.csv'):
             return pd.read_csv(file)
         else:
@@ -81,15 +81,15 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Helper kolom angka untuk data kualitatif/SDM
+    # Helper kolom angka jika data kualitatif tanpa angka
     num_cols = df_clean.select_dtypes(include=['number']).columns
     if len(num_cols) == 0:
-        df_clean['Jumlah_Karyawan'] = 1
+        df_clean['Jumlah_Data'] = 1
             
     return df_clean
 
 # ---------------------------------------------------------
-# 4. INITIALIZATION GROQ API & AI ENGINE
+# 4. INITIALIZATION GROQ API & AI ENGINE (PROMPT UNIVERSAL)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GROQ_API_KEY", None)
 
@@ -105,21 +105,21 @@ def get_ai_insight(df_summary_str, context_info, cache_key=None):
     try:
         client = Groq(api_key=api_key)
         prompt = f"""
-        Anda adalah Senior HR & Data Analyst.
-        Analisis data ringkasan berikut dari sebuah file data karyawan/organisasi.
+        Anda adalah Senior Business Intelligence Consultant & Data Strategist profesional.
+        Analisis data ringkasan berikut secara objektif dan mendalam.
         
         Konteks Data: {context_info}
         Ringkasan Data:
         {df_summary_str}
         
-        Susunlah analisis eksekutif yang komprehensif, tajam, dan objektif:
-        1. **Executive Summary**: Ringkasan komposisi SDM/karyawan.
-        2. **Key Insights & Trends**: Distribusi posisi, site, status, atau masa kontrak.
-        3. **Outliers & Anomalies**: Konsentrasi penumpukan posisi atau risiko habis kontrak.
-        4. **Strategic Recommendations**: Tindakan konkret terkait perpanjangan kontrak, retensi, atau alokasi tim.
-        5. **Management Conclusion**: Kesimpulan akhir.
+        Susunlah analisis eksekutif profesional sesuai jenis datanya (Inventaris, Penjualan, Operasional, SDM, atau Keuangan):
+        1. **Executive Summary**: Gambaran umum performa data & agregasi utama.
+        2. **Key Insights & Trends**: Temuan krusial, porsi kontribusi terbesar, atau pola signifikan.
+        3. **Outliers & Anomalies**: Lonjakan, konsentrasi yang tidak seimbang, atau potensi kendala.
+        4. **Strategic Recommendations**: Langkah operasional/bisnis konkret yang disarankan.
+        5. **Management Conclusion**: Kesimpulan ringkas untuk manajemen.
         
-        Gunakan bahasa Indonesia yang profesional, lugas, dan terstruktur dengan Markdown yang rapi.
+        Gunakan bahasa Indonesia profesional, terstruktur, dan tepat sasaran tanpa mengasumsikan ini data SDM kecuali jika datanya tentang SDM.
         """
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -134,9 +134,9 @@ def get_ai_insight(df_summary_str, context_info, cache_key=None):
 
 def prepare_advanced_data_context(df):
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     
-    ctx = []
-    ctx.append(f"TOTAL ROWS: {len(df)} | TOTAL COLS: {len(df.columns)}")
+    ctx = [f"TOTAL ROWS: {len(df)} | TOTAL COLS: {len(df.columns)}"]
     
     if categorical_cols:
         for cat in categorical_cols[:5]:
@@ -144,6 +144,11 @@ def prepare_advanced_data_context(df):
             top_counts.columns = [cat, 'Jumlah']
             ctx.append(f"\n--- DISTRIBUSI TOP 10 {cat.upper()} ---")
             ctx.append(top_counts.to_string(index=False))
+
+    if numeric_cols:
+        stats = df[numeric_cols[:3]].describe().T[['mean', 'min', 'max', '50%']]
+        ctx.append("\n--- STATISTIK HIMPUNAN ANGKA UTAMA ---")
+        ctx.append(stats.to_string())
                 
     return "\n".join(ctx)
 
@@ -157,9 +162,9 @@ def ask_data_chat(df, user_query):
         sample_rows = df.head(15).to_string(index=False)
         
         prompt = f"""
-        Anda adalah Asisten Data Analyst SDM. Jawab pertanyaan pengguna berdasarkan data Excel berikut.
+        Anda adalah Asisten Data Analyst Profesional. Jawab pertanyaan pengguna berdasarkan data Excel di bawah ini.
         
-        === ANALISIS DISTRIBUSI PRE-COMPUTED ===
+        === ANALISIS PRE-COMPUTED ===
         {full_context}
         
         === SAMPEL 15 BARIS PERTAMA ===
@@ -168,9 +173,8 @@ def ask_data_chat(df, user_query):
         Pertanyaan Pengguna: {user_query}
         
         Petunjuk Jawaban:
-        - Jika pengguna meminta total, status, ranking, atau daftar karyawan, hitung dan berikan jawaban yang akurat.
-        - Sajikan angka secara tepat dan sajikan tabel Markdown jika menyajikan daftar/rangking.
-        - Jawab dengan jelas, ramah, dan profesional dalam bahasa Indonesia.
+        - Jawab secara akurat, lugas, dan berikan tabel Markdown jika menyajikan ranking/daftar.
+        - Sesuaikan konteks jawaban dengan jenis datanya (Penjualan, Inventaris/Inbound, SDM, dll).
         """
         
         chat_completion = client.chat.completions.create(
@@ -311,7 +315,6 @@ if uploaded_file:
                     if selected_opts:
                         filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
 
-    # Merekam ulang tipe kolom dari filtered_df untuk menjamin sinkronisasi
     categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
     numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
 
@@ -326,11 +329,11 @@ if uploaded_file:
     kpi_col3.metric("Missing Values", f"{filtered_df.isna().sum().sum():,}")
     kpi_col4.metric("Baris Duplikat", f"{filtered_df.duplicated().sum():,}")
     
-    if 'Status' in filtered_df.columns:
-        aktif_count = len(filtered_df[filtered_df['Status'].astype(str).str.lower() == 'aktif'])
-        kpi_col5.metric("Karyawan Aktif", f"{aktif_count:,}")
+    if numeric_cols:
+        main_num = numeric_cols[0]
+        kpi_col5.metric(f"Total {main_num}", f"{filtered_df[main_num].sum():,.0f}")
     else:
-        kpi_col5.metric("Kolom Numerik", f"{len(numeric_cols)}")
+        kpi_col5.metric("Kolom Numerik", "0")
 
     # ---------------------------------------------------------
     # ONE CLICK ANALYZE
@@ -343,10 +346,10 @@ if uploaded_file:
             with st.spinner("Menjalankan analisis otomatis 360 derajat..."):
                 auto_cat = categorical_cols[0]
                 auto_num = numeric_cols[0]
-                auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'count']).reset_index().sort_values(by='count', ascending=False)
+                auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'count']).reset_index().sort_values(by='sum', ascending=False)
                 
                 ckey = f"{auto_cat}_{auto_num}_oneclick"
-                auto_res = get_ai_insight(auto_sum.head(15).to_string(index=False), f"Analisis Otomatis '{auto_cat}'", cache_key=ckey)
+                auto_res = get_ai_insight(auto_sum.head(15).to_string(index=False), f"Analisis Otomatis Dimensi '{auto_cat}' terhadap Metrik '{auto_num}'", cache_key=ckey)
                 
                 st.session_state['res'] = auto_res
                 st.session_state['data'] = auto_sum
@@ -368,24 +371,24 @@ if uploaded_file:
 
     # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
-        st.subheader("🤖 Analisis Naratif Berbasis AI (modified by iqbalmantam)")
+        st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if len(filtered_df) == 0:
             st.warning("Data terfilter kosong. Harap sesuaikan opsi filter Anda.")
         elif categorical_cols and numeric_cols:
             c1, c2 = st.columns(2)
             with c1:
-                group_col = st.selectbox("Dimensi Kategori:", categorical_cols, key="tab1_cat")
+                group_col = st.selectbox("Dimensi Kategori (Kolom Teks):", categorical_cols, key="tab1_cat")
             with c2:
-                val_col = st.selectbox("Metrik Utama:", numeric_cols, key="tab1_num")
+                val_col = st.selectbox("Metrik Utama (Kolom Angka):", numeric_cols, key="tab1_num")
                 
-            summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'count']).reset_index()
-            summary_df = summary_df.sort_values(by='count', ascending=False)
+            summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
+            summary_df = summary_df.sort_values(by='sum', ascending=False)
             
             cache_key = f"{group_col}_{val_col}_{len(filtered_df)}"
             
-            if st.button("🚀 Hasikan AI Executive Summary", type="secondary"):
-                with st.spinner("Groq AI sedang menganalisis data terfilter..."):
-                    ctx = f"Analisis dimensi '{group_col}' (Total data: {len(filtered_df)} baris)."
+            if st.button("🚀 Hasilkan AI Executive Summary", type="secondary"):
+                with st.spinner("Groq AI sedang menganalisis data..."):
+                    ctx = f"Analisis Kategori '{group_col}' berdasarkan Metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
                     data_str = summary_df.head(15).to_string(index=False)
                     res = get_ai_insight(data_str, ctx, cache_key=cache_key)
                     
@@ -397,7 +400,7 @@ if uploaded_file:
                 st.markdown(st.session_state['res'])
                 
                 pdf_bytes = generate_smart_pdf(
-                    title=f"AI Report: Distribusi {group_col}",
+                    title=f"AI Report: {val_col} per {group_col}",
                     ai_insight=st.session_state['res'],
                     df_summary=st.session_state['data']
                 )
@@ -413,7 +416,7 @@ if uploaded_file:
     # --- TAB 2: CHAT / TALK TO DATA ---
     with tab2:
         st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
-        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Berapa jumlah karyawan per Cost Center?', 'Siapa saja karyawan yang akan habis kontrak?')")
+        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Vendor Name mana yang kirim Qty terbanyak?', 'Berapa total Qty per Product Name?')")
         
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
@@ -444,11 +447,11 @@ if uploaded_file:
         
         c_p1, c_p2, c_p3 = st.columns(3)
         with c_p1:
-            p_rows = st.multiselect("Rows (Baris):", filtered_df.columns.tolist(), default=[categorical_cols[0]] if categorical_cols else [])
+            p_rows = st.multiselect("Rows (Baris/Kategori):", categorical_cols if categorical_cols else filtered_df.columns.tolist(), default=[categorical_cols[0]] if categorical_cols else [])
         with c_p2:
-            p_vals = st.selectbox("Values (Nilai):", numeric_cols if numeric_cols else filtered_df.columns.tolist())
+            p_vals = st.selectbox("Values (Nilai Metrik):", numeric_cols if numeric_cols else filtered_df.columns.tolist())
         with c_p3:
-            p_agg = st.selectbox("Fungsi Agregasi:", ["count", "sum", "mean", "min", "max"])
+            p_agg = st.selectbox("Fungsi Agregasi:", ["sum", "count", "mean", "min", "max"])
             
         if p_rows and p_vals:
             try:
