@@ -9,7 +9,7 @@ from groq import Groq
 # 1. KONFIGURASI HALAMAN
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Smart AI Excel Summarizer Studio",
+    page_title="Smart AI Excel Summarizer Pro Studio",
     page_icon="🧠",
     layout="wide"
 )
@@ -43,77 +43,140 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. INITIALIZATION GROQ API FROM SECRETS
+# 3. CACHED DATA LOADING & CLEANING (POIN 1, 2, 12, 19)
+# ---------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def load_excel_data(file, sheet_name=None):
+    """Membaca file Excel/CSV satu kali dengan efisien tanpa re-read."""
+    try:
+        if file.name.endswith('.csv'):
+            return pd.read_csv(file)
+        else:
+            excel = pd.ExcelFile(file)
+            selected = sheet_name if sheet_name else excel.sheet_names[0]
+            return excel.parse(selected)
+    except Exception as e:
+        st.error(f"Gagal membaca file: {str(e)}")
+        return pd.DataFrame()
+
+@st.cache_data(show_spinner=False)
+def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_dups=True):
+    """Auto Cleaning Lanjutan: Trim, Case Format, Drop Duplicates, Parse Type."""
+    df_clean = df.copy()
+    if drop_dups:
+        df_clean = df_clean.drop_duplicates()
+    
+    str_cols = df_clean.select_dtypes(include=['object']).columns
+    for col in str_cols:
+        if do_trim:
+            df_clean[col] = df_clean[col].astype(str).str.strip()
+        if do_upper:
+            df_clean[col] = df_clean[col].astype(str).str.upper()
+        elif do_lower:
+            df_clean[col] = df_clean[col].astype(str).str.lower()
+            
+    return df_clean
+
+# ---------------------------------------------------------
+# 4. INITIALIZATION GROQ API & AI ENGINE (POIN 3, 4, 5, 17)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GROQ_API_KEY", None)
 
-def get_ai_insight(df_summary_str, context_info):
-    """Fungsi Executive Summary berbasis Groq Llama 3.3."""
+if "summary_cache" not in st.session_state:
+    st.session_state.summary_cache = {}
+
+def get_ai_insight(df_summary_markdown, context_info, cache_key=None):
+    """Fungsi AI dengan Caching & Professional Prompting."""
+    if cache_key and cache_key in st.session_state.summary_cache:
+        return st.session_state.summary_cache[cache_key]
+
     if not api_key:
         return "⚠️ GROQ_API_KEY tidak ditemukan di Streamlit Secrets."
     try:
         client = Groq(api_key=api_key)
         prompt = f"""
-        Kamu adalah seorang Senior Data Analyst. Analisis data ringkasan berikut dari sebuah file Excel.
+        Anda adalah Senior Business Intelligence Consultant & Data Strategist tingkat dunia.
+        Analisis data ringkasan berikut dari sebuah file bisnis.
         
         Konteks Data: {context_info}
-        Ringkasan Data:
-        {df_summary_str}
+        Ringkasan Data (Tabel Markdown):
+        {df_summary_markdown}
         
-        Tolong buatkan Executive Summary yang cerdas dan profesional dalam bahasa Indonesia:
-        1. **Temuan Utama (Key Takeaways)**: Poin-poin paling krusial.
-        2. **Anomali / Tren Menarik**: Pola unik, lonjakan, atau penurunan signifikan.
-        3. **Rekomendasi Bisnis**: Tindakan konkret yang sebaiknya diambil manajemen berdasarkan data ini.
-        Format respons menggunakan Markdown yang rapi dan lugas.
+        Susunlah analisis eksekutif yang komprehensif, tajam, dan objektif dengan struktur berikut:
+        1. **Executive Summary**: Ringkasan situasi secara keseluruhan.
+        2. **Key Insights & Trends**: Pola utama, tren pertumbuhan, dan temuan krusial.
+        3. **Outliers & Anomalies**: Lonjakan/penurunan tak wajar atau hal yang memerlukan perhatian.
+        4. **Risks & Opportunities**: Risiko potensial dan peluang bisnis yang bisa dimaksimalkan.
+        5. **Strategic Recommendations & Business Actions**: Langkah konkret yang harus diambil manajemen.
+        6. **Management Conclusion**: Kesimpulan akhir tingkat direksi.
+        
+        Gunakan bahasa Indonesia yang profesional, lugas, dan terstruktur dengan Markdown yang rapi.
         """
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
         )
-        return chat_completion.choices[0].message.content
+        res_text = chat_completion.choices[0].message.content
+        if cache_key:
+            st.session_state.summary_cache[cache_key] = res_text
+        return res_text
     except Exception as e:
         return f"Gagal mendapatkan respon AI: {str(e)}"
 
+def prepare_advanced_data_context(df):
+    """Menghitung agregasi pra-analisis komprehensif untuk dikirim ke Chat AI."""
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    ctx = []
+    ctx.append(f"TOTAL ROWS: {len(df)} | TOTAL COLS: {len(df.columns)}")
+    ctx.append(f"MISSING VALUES TOTAL: {df.isna().sum().sum()} | DUPLICATES: {df.duplicated().sum()}")
+    
+    # Statistik Angka
+    if numeric_cols:
+        stats = df[numeric_cols].agg(['sum', 'mean', 'median', 'min', 'max', 'std']).T
+        ctx.append("\n--- STATISTIK NUMERIK (Sum, Mean, Median, Min, Max, Std) ---")
+        ctx.append(stats.to_markdown())
+        
+    # Agregasi Kategori Utama
+    if categorical_cols and numeric_cols:
+        for cat in categorical_cols[:3]:
+            for num in numeric_cols[:2]:
+                grp = df.groupby(cat)[num].sum().reset_index()
+                top10 = grp.sort_values(by=num, ascending=False).head(10)
+                bot10 = grp.sort_values(by=num, ascending=True).head(10)
+                ctx.append(f"\n--- TOP 10 {cat.upper()} BY TOTAL {num.upper()} ---")
+                ctx.append(top10.to_markdown(index=False))
+                ctx.append(f"\n--- BOTTOM 10 {cat.upper()} BY TOTAL {num.upper()} ---")
+                ctx.append(bot10.to_markdown(index=False))
+                
+    return "\n".join(ctx)
+
 def ask_data_chat(df, user_query):
-    """Fungsi Tanya Jawab / Chat cerdas yang menghitung agregasi nyata dari DataFrame."""
+    """Chat AI cerdas dengan Konteks Preprocessing Lengkap."""
     if not api_key:
         return "⚠️ GROQ_API_KEY tidak terdeteksi."
     try:
         client = Groq(api_key=api_key)
         
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-        
-        # Susun agregasi otomatis untuk semua kombinasi kolom kategori & angka utama
-        summary_context = ""
-        if categorical_cols and numeric_cols:
-            for cat in categorical_cols[:3]: # Ambil hingga 3 kolom kategori utama
-                for num in numeric_cols[:2]: # Ambil hingga 2 kolom angka utama
-                    top_grouped = df.groupby(cat)[num].sum().reset_index().sort_values(by=num, ascending=False).head(10)
-                    summary_context += f"\n--- Top 10 berdasarkan '{cat}' & Total '{num}' ---\n"
-                    summary_context += top_grouped.to_string(index=False) + "\n"
-
-        sample_rows = df.head(15).to_string(index=False)
+        full_context = prepare_advanced_data_context(df)
+        sample_rows = df.head(10).to_markdown(index=False)
         
         prompt = f"""
-        Kamu adalah Asisten Data Analyst yang sangat cerdas dan teliti. Jawab pertanyaan pengguna berdasarkan data Excel berikut.
+        Anda adalah Asisten Senior Data Analyst. Jawab pertanyaan pengguna berdasarkan analisis data Excel di bawah ini.
         
-        {summary_context}
+        === ANALISIS AGREGASI LENGKAP PRE-COMPUTED ===
+        {full_context}
         
-        Sampel Baris Data Mentah (15 baris pertama):
+        === SAMPEL 10 BARIS PERTAMA ===
         {sample_rows}
-        
-        Informasi Dataset:
-        - Total Baris: {len(df)}
-        - Kolom Kategori: {categorical_cols}
-        - Kolom Numerik: {numeric_cols}
         
         Pertanyaan Pengguna: {user_query}
         
         Petunjuk Jawaban:
-        - Jika pengguna meminta Top 10 / Ranking / Tertinggi, gunakan tabel agregasi yang telah disediakan di atas.
-        - Tampilkan hasilnya dalam bentuk tabel Markdown yang rapi dan sertakan angkanya.
-        - Berikan jawaban yang langsung, akurat, dan profesional.
+        - Jika pengguna meminta total, rata-rata, statistik, top 10, bottom 10, atau perbandingan, ambil dari analisis pra-hitung di atas.
+        - Sajikan angka secara tepat dan sajikan tabel Markdown jika menyajikan daftar/rangking.
+        - Jawab dengan jelas, ramah, dan profesional dalam bahasa Indonesia.
         """
         
         chat_completion = client.chat.completions.create(
@@ -125,24 +188,38 @@ def ask_data_chat(df, user_query):
         return f"Gagal menjawab pertanyaan: {str(e)}"
 
 # ---------------------------------------------------------
-# 4. HELPER EXPORT PDF & EXCEL
+# 5. HELPER EXPORT PDF & EXCEL (POIN 6, 13)
 # ---------------------------------------------------------
+def clean_latin_text(text):
+    """Sanitizer string untuk mencegah Unicode error pada FPDF font latin."""
+    replacements = {
+        '—': '-', '–': '-', '“': '"', '”': '"', '‘': "'", '’': "'",
+        '…': '...', '•': '*', '™': 'TM', '®': '(R)', '©': '(C)'
+    }
+    for orig, repl in replacements.items():
+        text = text.replace(orig, repl)
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def generate_smart_pdf(title, ai_insight, df_summary):
+    """Membuat laporan PDF aman Unicode."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
+    # Title
     pdf.set_font("Helvetica", style="B", size=15)
-    pdf.cell(0, 10, title, ln=True, align="C")
+    pdf.cell(0, 10, clean_latin_text(title), ln=True, align="C")
     pdf.ln(5)
     
+    # AI Summary
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
-    pdf.set_font("Helvetica", style="B", size=8.5)
-    clean_text = ai_insight.replace("*", "").replace("#", "")
+    pdf.set_font("Helvetica", size=8.5)
+    clean_text = clean_latin_text(ai_insight.replace("*", "").replace("#", ""))
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
     
+    # Table Data
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(0, 8, "Data Summary Table", ln=True)
     
@@ -152,13 +229,13 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     
     pdf.set_fill_color(230, 230, 230)
     for col in cols:
-        pdf.cell(col_width, 7, str(col)[:18], border=1, align="C", fill=True)
+        pdf.cell(col_width, 7, clean_latin_text(str(col))[:18], border=1, align="C", fill=True)
     pdf.ln()
     
     pdf.set_font("Helvetica", size=8)
     for _, row in df_summary.head(30).iterrows():
         for col in cols:
-            pdf.cell(col_width, 6, str(row[col])[:20], border=1, align="L")
+            pdf.cell(col_width, 6, clean_latin_text(str(row[col]))[:20], border=1, align="L")
         pdf.ln()
         
     pdf_buffer = io.BytesIO()
@@ -168,7 +245,6 @@ def generate_smart_pdf(title, ai_insight, df_summary):
     return pdf_buffer
 
 def convert_df_to_excel(df):
-    """Export ke File Excel (.xlsx) Rapi."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Summary_Result')
@@ -176,35 +252,43 @@ def convert_df_to_excel(df):
     return output
 
 # ---------------------------------------------------------
-# 5. JUDUL APLIKASI & UPLOAD DATA LANGSUNG DI HALAMAN UTAMA
+# 6. JUDUL APLIKASI & UPLOAD DATA
 # ---------------------------------------------------------
 st.title("🧠 Smart AI Excel Summarizer Pro Studio")
 st.caption("Upload file Excel mentah, bersihkan data, filter interaktif, obrolkan data dengan AI, buat pivot & grafik kustom, lalu unduh laporan PDF/Excel.")
 
-# UPLOAD FILE DI HALAMAN UTAMA
 st.write("---")
 uploaded_file = st.file_uploader("📁 Pilih & Upload File Excel (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
-    if uploaded_file.name.endswith('.csv'):
-        df_raw = pd.read_csv(uploaded_file)
-    else:
-        excel_file = pd.ExcelFile(uploaded_file)
-        selected_sheet = st.selectbox("📄 Pilih Sheet Excel", excel_file.sheet_names)
-        df_raw = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+    # Progress Bar pembacaan file (Poin 18)
+    progress_bar = st.progress(0, text="Membaca file Excel...")
+    
+    sheet_name = None
+    if not uploaded_file.name.endswith('.csv'):
+        excel_meta = pd.ExcelFile(uploaded_file)
+        if len(excel_meta.sheet_names) > 1:
+            sheet_name = st.selectbox("📄 Pilih Sheet Excel", excel_meta.sheet_names)
+            
+    progress_bar.progress(50, text="Memuat dataset ke memori...")
+    df_raw = load_excel_data(uploaded_file, sheet_name)
+    progress_bar.progress(100, text="Selesai!")
+    progress_bar.empty()
 
-    # --- EXPANDER UTILS: DATA CLEANING & FILTER ---
+    if df_raw.empty:
+        st.error("Data kosong atau gagal dimuat.")
+        st.stop()
+
+    # --- PENGATURAN FILTER & CLEANING ---
     with st.expander("🛠️ Pengaturan Filter & Data Cleaning (Opsional)", expanded=False):
         col_c1, col_c2 = st.columns(2)
         with col_c1:
-            auto_clean = st.checkbox("🧹 Aktifkan Auto-Cleaning (Hapus Duplikat & Trim Spasi)", value=True)
+            st.write("**:broom: Auto Data Cleaning Options**")
+            auto_clean = st.checkbox("Aktifkan Cleaning Otomatis", value=True)
+            do_trim = st.checkbox("Trim Spaces (Hapus Spasi Ekstra)", value=True)
+            drop_dups = st.checkbox("Hapus Baris Duplikat", value=True)
             
-        df = df_raw.copy()
-        if auto_clean:
-            df = df.drop_duplicates()
-            str_cols = df.select_dtypes(include=['object']).columns
-            for col in str_cols:
-                df[col] = df[col].astype(str).str.strip()
+        df = clean_data_advanced(df_raw, do_trim=do_trim, drop_dups=drop_dups) if auto_clean else df_raw.copy()
 
         categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
@@ -221,6 +305,7 @@ if uploaded_file:
         filtered_df = df.copy()
         
         with col_c2:
+            st.write("**:mag: Dynamic Multi-Column Filters (Poin 9)**")
             if datetime_cols:
                 date_col_selected = st.selectbox("Filter Kolom Tanggal:", datetime_cols)
                 min_date = filtered_df[date_col_selected].min().date()
@@ -233,38 +318,84 @@ if uploaded_file:
                         (filtered_df[date_col_selected].dt.date <= end_d)
                     ]
 
-    if 'filtered_df' not in locals():
-        filtered_df = df_raw.copy()
-        categorical_cols = filtered_df.select_dtypes(include=['object', 'category']).columns.tolist()
-        numeric_cols = filtered_df.select_dtypes(include=['number']).columns.tolist()
+            # Dynamic Filter untuk SEMUA Kolom Kategori (Poin 9)
+            if categorical_cols:
+                for cat_col in categorical_cols[:5]: # Batasi 5 kategori pertama agar tidak overwhelming
+                    unique_opts = list(df[cat_col].unique())
+                    selected_opts = st.multiselect(f"Filter {cat_col}:", unique_opts, default=[])
+                    if selected_opts:
+                        filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
 
-    # --- TAB NAVIGASI UTAMA ---
+    # ---------------------------------------------------------
+    # DASHBOARD KPI CARDS & STATISTIK CEPAT (POIN 10, 14)
+    # ---------------------------------------------------------
+    st.write("### 📌 Executive KPI Dashboard")
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
+    
+    kpi_col1.metric("Total Baris Data", f"{len(filtered_df):,}")
+    kpi_col2.metric("Total Kolom", f"{len(filtered_df.columns)}")
+    kpi_col3.metric("Missing Values", f"{filtered_df.isna().sum().sum():,}")
+    kpi_col4.metric("Baris Duplikat", f"{filtered_df.duplicated().sum():,}")
+    
+    if numeric_cols:
+        main_num = numeric_cols[0]
+        kpi_col5.metric(f"Total {main_num}", f"{filtered_df[main_num].sum():,.2f}")
+    else:
+        kpi_col5.metric("Kolom Numerik", "0")
+
+    # ---------------------------------------------------------
+    # TOMBOL MODE OTOMATIS / ONE CLICK ANALYZE (POIN 20)
+    # ---------------------------------------------------------
+    st.write("")
+    if st.button("⚡ One-Click Auto Analyze & Generate Full Report", type="primary", use_container_width=True):
+        if categorical_cols and numeric_cols:
+            with st.spinner("Menjalankan analisis otomatis 360 derajat..."):
+                auto_cat = categorical_cols[0]
+                auto_num = numeric_cols[0]
+                auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'mean', 'count']).reset_index().sort_values(by='sum', ascending=False)
+                
+                ckey = f"{auto_cat}_{auto_num}_oneclick"
+                auto_res = get_ai_insight(auto_sum.head(15).to_markdown(index=False), f"Analisis Otomatis '{auto_cat}' vs '{auto_num}'", cache_key=ckey)
+                
+                st.session_state['res'] = auto_res
+                st.session_state['data'] = auto_sum
+                st.success("✅ One-Click Analysis Selesai! Hasil dapat dilihat pada tab 'AI Executive Summary'.")
+        else:
+            st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom numerik untuk One-Click Analyze.")
+
+    # ---------------------------------------------------------
+    # TAB NAVIGASI UTAMA
+    # ---------------------------------------------------------
     st.write("---")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🤖 AI Executive Summary", 
         "💬 Talk to Data (Q&A)", 
-        "🔀 Custom Pivot & Charts Studio", 
-        "📌 Data Preview & Export"
+        "🔀 Custom Pivot & Charts", 
+        "📊 Data Profiling & Quality",
+        "📌 Raw Data & Export"
     ])
 
-    # TAB 1: AI EXECUTIVE SUMMARY
+    # --- TAB 1: AI EXECUTIVE SUMMARY (POIN 3, 5, 17) ---
     with tab1:
         st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
         if categorical_cols and numeric_cols:
             c1, c2 = st.columns(2)
             with c1:
-                group_col = st.selectbox("Dimensi Kategori:", categorical_cols)
+                group_col = st.selectbox("Dimensi Kategori:", categorical_cols, key="tab1_cat")
             with c2:
-                val_col = st.selectbox("Metrik Utama (Angka):", numeric_cols)
+                val_col = st.selectbox("Metrik Utama (Angka):", numeric_cols, key="tab1_num")
                 
             summary_df = filtered_df.groupby(group_col)[val_col].agg(['sum', 'mean', 'count']).reset_index()
             summary_df = summary_df.sort_values(by='sum', ascending=False)
             
-            if st.button("🚀 Hasikan AI Executive Summary", type="primary"):
+            cache_key = f"{group_col}_{val_col}_{len(filtered_df)}"
+            
+            if st.button("🚀 Hasilkan AI Executive Summary", type="secondary"):
                 with st.spinner("Groq AI sedang menganalisis data terfilter..."):
-                    ctx = f"Analisis kategori '{group_col}' terhadap metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
-                    data_str = summary_df.head(15).to_string(index=False)
-                    res = get_ai_insight(data_str, ctx)
+                    ctx = f"Analisis dimensi '{group_col}' terhadap metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
+                    # Mengirim format Markdown (Poin 3)
+                    data_md = summary_df.head(15).to_markdown(index=False)
+                    res = get_ai_insight(data_md, ctx, cache_key=cache_key)
                     
                     st.session_state['res'] = res
                     st.session_state['data'] = summary_df
@@ -287,13 +418,17 @@ if uploaded_file:
         else:
             st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom angka.")
 
-    # TAB 2: CHAT / TALK TO DATA
+    # --- TAB 2: CHAT / TALK TO DATA (POIN 4, 16) ---
     with tab2:
         st.subheader("💬 Tanya Jawab Interaktif dengan Data Excel")
-        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Tampilkan top ten customer tertinggi', 'Berapa total penjualan?')")
+        st.caption("Ajukan pertanyaan bebas tentang data Anda (contoh: 'Tampilkan top ten customer tertinggi', 'Berapa total sales Januari?')")
         
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
+            
+        # Poin 16: Batasi riwayat chat max 20 agar memori ringan
+        if len(st.session_state.chat_history) > 20:
+            st.session_state.chat_history = st.session_state.chat_history[-20:]
             
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
@@ -312,7 +447,7 @@ if uploaded_file:
                     
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
 
-    # TAB 3: CHART SELECTOR & PIVOT STUDIO
+    # --- TAB 3: CHART SELECTOR & PIVOT STUDIO (POIN 7, 8, 13) ---
     with tab3:
         st.subheader("🔀 Custom Pivot & Dynamic Chart Studio")
         
@@ -330,21 +465,65 @@ if uploaded_file:
             
             st.divider()
             st.write("### 📊 Visualisasi Grafik")
-            chart_type = st.radio("Pilih Jenis Grafik:", ["Bar Chart", "Line Chart", "Pie Chart", "Scatter Plot"], horizontal=True)
             
+            # Poin 8: Scatter Plot hanya jika ada minimal 2 kolom numerik
+            available_charts = ["Bar Chart", "Line Chart", "Pie Chart"]
+            if len(numeric_cols) >= 2:
+                available_charts.append("Scatter Plot")
+                
+            chart_type = st.radio("Pilih Jenis Grafik:", available_charts, horizontal=True)
+            
+            fig = None
             if chart_type == "Bar Chart":
                 fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
             elif chart_type == "Line Chart":
                 fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
             elif chart_type == "Pie Chart":
-                fig = px.pie(p_res, names=p_rows[0], values=p_vals, title=f"Proporsi {p_vals} per {p_rows[0]}")
-            elif chart_type == "Scatter Plot":
-                fig = px.scatter(p_res, x=p_rows[0], y=p_vals, size=p_vals, title=f"Sebaran {p_vals} per {p_rows[0]}")
+                # Poin 7: Mencegah Pie Chart crash jika kategori > 20
+                if len(p_res) > 20:
+                    st.warning("⚠️ Kategori lebih dari 20 item. Pie Chart otomatis membatasi ke Top 10 kategori terbesar agar grafik terbaca.")
+                    p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
+                else:
+                    p_res_pie = p_res
+                fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi Top {p_vals} per {p_rows[0]}")
+            elif chart_type == "Scatter Plot" and len(numeric_cols) >= 2:
+                num_y = st.selectbox("Pilih Metrik Y (Scatter Plot):", numeric_cols, index=1 if len(numeric_cols)>1 else 0)
+                fig = px.scatter(filtered_df, x=p_vals, y=num_y, color=p_rows[0] if p_rows else None, title=f"Scatter Plot: {p_vals} vs {num_y}")
                 
-            st.plotly_chart(fig, use_container_width=True)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
 
-    # TAB 4: PREVIEW DATA & EXPORT EXCEL
+    # --- TAB 4: DATA PROFILING & MISSING VALUE REPORT (POIN 11, 15) ---
     with tab4:
+        st.subheader("📊 Data Profiling & Quality Report")
+        
+        prof_c1, prof_c2 = st.columns(2)
+        with prof_c1:
+            st.write("**:mag: Missing Value Report (Poin 11)**")
+            null_df = pd.DataFrame({
+                'Kolom': filtered_df.columns,
+                'Missing Count': filtered_df.isna().sum().values,
+                'Missing (%)': (filtered_df.isna().sum().values / len(filtered_df) * 100).round(2)
+            }).sort_values(by='Missing Count', ascending=False)
+            st.dataframe(null_df, use_container_width=True)
+            
+        with prof_c2:
+            st.write("**:info: Dataset Overview & Memory (Poin 15)**")
+            dtype_df = pd.DataFrame({
+                'Kolom': filtered_df.columns,
+                'Data Type': filtered_df.dtypes.astype(str).values,
+                'Unique Values': [filtered_df[c].nunique() for c in filtered_df.columns]
+            })
+            st.dataframe(dtype_df, use_container_width=True)
+            st.caption(f"Total Memori Digunakan: **{filtered_df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB**")
+            
+        st.divider()
+        st.write("**:chart_with_upwards_trend: Deskripsi Statistik Numerik**")
+        if numeric_cols:
+            st.dataframe(filtered_df[numeric_cols].describe().T, use_container_width=True)
+
+    # --- TAB 5: PREVIEW DATA & EXPORT EXCEL ---
+    with tab5:
         st.subheader("📌 Data Preview & Export Excel")
         st.write(f"Total Baris Data Terfilter: **{len(filtered_df)}** (Dari Total Raw: **{len(df_raw)}**)")
         st.dataframe(filtered_df, use_container_width=True)
