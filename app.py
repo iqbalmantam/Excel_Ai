@@ -393,7 +393,7 @@ if uploaded_file:
 
     # --- TAB 1: AI EXECUTIVE SUMMARY ---
     with tab1:
-        st.subheader("🤖 Analisis Naratif Berbasis Groq AI (Llama 3.3)")
+        st.subheader("🤖 Analisis Naratif Berbasis AI")
         if len(filtered_df) == 0:
             st.warning("Data terfilter kosong. Harap sesuaikan opsi filter Anda.")
         elif categorical_cols and valid_numeric_cols:
