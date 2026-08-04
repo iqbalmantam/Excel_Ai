@@ -1,4 +1,5 @@
 import io
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -46,13 +47,13 @@ st.markdown('<div class="created-by">Created by iqbalmantam</div>', unsafe_allow
 # 3. CACHED DATA LOADING & CLEANING
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def load_excel_data(file, sheet_name=None):
+def load_excel_data(file_bytes, file_name, sheet_name=None):
     try:
-        file.seek(0)
-        if file.name.endswith('.csv'):
-            return pd.read_csv(file)
+        file_obj = io.BytesIO(file_bytes)
+        if file_name.endswith('.csv'):
+            return pd.read_csv(file_obj)
         else:
-            excel = pd.ExcelFile(file)
+            excel = pd.ExcelFile(file_obj)
             selected = sheet_name if sheet_name else excel.sheet_names[0]
             return excel.parse(selected)
     except Exception as e:
@@ -63,10 +64,14 @@ def load_excel_data(file, sheet_name=None):
 def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_dups=True):
     df_clean = df.copy()
     
-    # Penanganan Kolom Duplikat
+    # Penanganan Kolom Duplikat yang Aman
     cols = pd.Series(df_clean.columns)
     for dup in cols[cols.duplicated()].unique():
-        cols[cols == dup] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
+        dup_mask = cols == dup
+        dup_indices = cols[dup_mask].index
+        for idx_count, idx in enumerate(dup_indices):
+            if idx_count > 0:
+                cols.iloc[idx] = f"{dup}_{idx_count}"
     df_clean.columns = cols
 
     if drop_dups:
@@ -81,10 +86,15 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Konversi otomatis kolom angka yang masih terbaca string
+    # Konversi otomatis kolom angka yang bermasalah (termasuk hilangkan simbol mata uang)
     for col in df_clean.columns:
-        if col.lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total']:
-            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+        if col.lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total', 'harga']:
+            if df_clean[col].dtype == object:
+                # Cleaning string berisi format angka / rupiah
+                cleaned_series = df_clean[col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                df_clean[col] = pd.to_numeric(cleaned_series, errors='coerce')
+            else:
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
 
     # Helper kolom angka jika data kualitatif tanpa angka murni
     num_cols = df_clean.select_dtypes(include=['number']).columns
@@ -183,7 +193,7 @@ def ask_data_chat(df, user_query):
         
         Petunjuk Jawaban:
         - Jawab secara akurat, lugas, dan berikan tabel Markdown jika menyajikan ranking/daftar.
-        - Perhatikan akurasi angka secara matematis.
+        - Perhatikan akurasi angka secara matematis. Jika informasi tidak tersedia di sampel/agregasi di atas, sampaikan keterbatasannya dengan sopan.
         - Sesuaikan konteks jawaban dengan jenis datanya (Penjualan, Inventaris/Inbound, SDM, dll).
         """
         
@@ -199,26 +209,29 @@ def ask_data_chat(df, user_query):
 # 5. HELPER EXPORT PDF & EXCEL
 # ---------------------------------------------------------
 def clean_latin_text(text):
+    if not text:
+        return ""
     replacements = {
         '—': '-', '–': '-', '“': '"', '”': '"', '‘': "'", '’': "'",
         '…': '...', '•': '*', '™': 'TM', '®': '(R)', '©': '(C)'
     }
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
-    return text.encode('latin-1', 'replace').decode('latin-1')
+    # Hapus karakter non-latin1 agar FPDF tidak crash
+    return text.encode('latin-1', 'ignore').decode('latin-1')
 
 def generate_smart_pdf(title, ai_insight, df_summary):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    pdf.set_font("Helvetica", style="B", size=15)
+    pdf.set_font("Helvetica", style="B", size=14)
     pdf.cell(0, 10, clean_latin_text(title), ln=True, align="C")
     pdf.ln(5)
     
     pdf.set_font("Helvetica", style="B", size=11)
     pdf.cell(0, 8, "AI Executive Summary", ln=True)
-    pdf.set_font("Helvetica", style="B", size=8.5)
+    pdf.set_font("Helvetica", size=9)
     clean_text = clean_latin_text(ai_insight.replace("*", "").replace("#", ""))
     pdf.multi_cell(0, 5, clean_text)
     pdf.ln(6)
@@ -242,7 +255,7 @@ def generate_smart_pdf(title, ai_insight, df_summary):
         pdf.ln()
         
     pdf_buffer = io.BytesIO()
-    pdf_bytes = pdf.output()
+    pdf_bytes = pdf.output(dest='S').encode('latin-1', 'ignore')
     pdf_buffer.write(pdf_bytes)
     pdf_buffer.seek(0)
     return pdf_buffer
@@ -264,16 +277,17 @@ st.write("---")
 uploaded_file = st.file_uploader("📁 Pilih & Upload File Excel (.xlsx / .xls / .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
+    file_bytes = uploaded_file.getvalue()
     progress_bar = st.progress(0, text="Membaca file Excel...")
     
     sheet_name = None
     if not uploaded_file.name.endswith('.csv'):
-        excel_meta = pd.ExcelFile(uploaded_file)
+        excel_meta = pd.ExcelFile(io.BytesIO(file_bytes))
         if len(excel_meta.sheet_names) > 1:
             sheet_name = st.selectbox("📄 Pilih Sheet Excel", excel_meta.sheet_names)
             
     progress_bar.progress(50, text="Memuat dataset ke memori...")
-    df_raw = load_excel_data(uploaded_file, sheet_name)
+    df_raw = load_excel_data(file_bytes, uploaded_file.name, sheet_name)
     progress_bar.progress(100, text="Selesai!")
     progress_bar.empty()
 
@@ -298,7 +312,7 @@ if uploaded_file:
                 try:
                     df[col] = pd.to_datetime(df[col])
                     datetime_cols.append(col)
-                except:
+                except Exception:
                     pass
 
         filtered_df = df.copy()
@@ -320,7 +334,7 @@ if uploaded_file:
             cat_cols_raw = df.select_dtypes(include=['object', 'category']).columns.tolist()
             if cat_cols_raw:
                 for cat_col in cat_cols_raw[:5]:
-                    unique_opts = list(df[cat_col].unique())
+                    unique_opts = list(df[cat_col].dropna().unique())
                     selected_opts = st.multiselect(f"Filter {cat_col}:", unique_opts, default=[])
                     if selected_opts:
                         filtered_df = filtered_df[filtered_df[cat_col].isin(selected_opts)]
@@ -370,7 +384,7 @@ if uploaded_file:
                 auto_num = valid_numeric_cols[0]
                 auto_sum = filtered_df.groupby(auto_cat)[auto_num].agg(['sum', 'mean', 'count']).reset_index().sort_values(by='sum', ascending=False)
                 
-                ckey = f"{auto_cat}_{auto_num}_oneclick"
+                ckey = f"{auto_cat}_{auto_num}_oneclick_{len(filtered_df)}"
                 auto_res = get_ai_insight(auto_sum.head(15).to_string(index=False), f"Analisis Otomatis Dimensi '{auto_cat}' terhadap Metrik '{auto_num}'", cache_key=ckey)
                 
                 st.session_state['res'] = auto_res
@@ -413,7 +427,7 @@ if uploaded_file:
             
             cache_key = f"{group_col}_{val_col}_{len(filtered_df)}"
             
-            if st.button("🚀 Hasikan AI Executive Summary", type="secondary"):
+            if st.button("🚀 Hasilkan AI Executive Summary", type="secondary"):
                 with st.spinner("Groq AI sedang menganalisis data..."):
                     ctx = f"Analisis Kategori '{group_col}' berdasarkan Metrik '{val_col}' (Total data: {len(filtered_df)} baris)."
                     data_str = summary_df.head(15).to_string(index=False)
