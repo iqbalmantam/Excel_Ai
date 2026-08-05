@@ -255,7 +255,8 @@ def generate_smart_pdf(title, ai_insight, df_summary):
         pdf.ln()
         
     pdf_buffer = io.BytesIO()
-    pdf_bytes = pdf.output(dest='S').encode('latin-1', 'ignore')
+    # FIX: Menggunakan bytes(pdf.output()) yang kompatibel dengan fpdf2
+    pdf_bytes = bytes(pdf.output())
     pdf_buffer.write(pdf_bytes)
     pdf_buffer.seek(0)
     return pdf_buffer
