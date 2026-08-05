@@ -62,6 +62,39 @@ def load_excel_data(file_bytes, file_name, sheet_name=None):
         st.error(f"Gagal membaca file: {str(e)}")
         return pd.DataFrame()
 
+def parse_smart_number(val):
+    """Fungsi pembaca angka pintar (Handling IDR 1.500,00 & US 1,500.00 & 1.500)"""
+    if pd.isna(val):
+        return None
+    s = str(val).strip()
+    s = re.sub(r'[^\d.,-]', '', s) # Hapus teks/simbol mata uang
+    if not s:
+        return None
+    
+    # Jika ada titik dan koma sekaligus
+    if '.' in s and ',' in s:
+        if s.find('.') < s.find(','): # Format IDR: 1.500,00 -> 1500.00
+            s = s.replace('.', '').replace(',', '.')
+        else: # Format US: 1,500.00 -> 1500.00
+            s = s.replace(',', '')
+    elif ',' in s:
+        # Jika cuma ada koma (misal: 1500,50 atau 1,500)
+        parts = s.split(',')
+        if len(parts[-1]) == 2: # Asumsi desimal (1500,50)
+            s = s.replace(',', '.')
+        else: # Asumsi ribuan (1,500)
+            s = s.replace(',', '')
+    elif '.' in s:
+        # Jika cuma ada titik (misal: 1.500) -> dalam konteks Indonesia sering kali ribuan
+        parts = s.split('.')
+        if len(parts[-1]) == 3 and len(parts) > 1: # Ribuan (1.500 atau 1.000.000)
+            s = s.replace('.', '')
+            
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
 @st.cache_data(show_spinner=False)
 def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_dups=True):
     df_clean = df.copy()
@@ -91,15 +124,11 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Konversi otomatis kolom angka yang bermasalah (Pembersihan format IDR/USD, koma, titik)
+    # Konversi otomatis kolom angka bermasalah
     for col in df_clean.columns:
         if str(col).lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total', 'harga']:
             if df_clean[col].dtype == object:
-                # Menghilangkan mata uang dan karakter non-numerik kecuali minus, titik, koma
-                cleaned_series = df_clean[col].astype(str).str.replace(r'[^\d.,-]', '', regex=True)
-                # Standarisasi format koma/titik ribuan
-                cleaned_series = cleaned_series.str.replace(',', '.', regex=False)
-                df_clean[col] = pd.to_numeric(cleaned_series, errors='coerce')
+                df_clean[col] = df_clean[col].apply(parse_smart_number)
             else:
                 df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
 
@@ -224,7 +253,7 @@ def clean_latin_text(text):
     }
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
-    return text.encode('latin-1', 'ignore').decode('latin-1')
+    return str(text).encode('latin-1', 'ignore').decode('latin-1')
 
 def generate_smart_pdf(title, ai_insight, df_summary):
     pdf = FPDF()
@@ -399,6 +428,7 @@ if uploaded_file:
                 
                 st.session_state['res'] = auto_res
                 st.session_state['data'] = auto_sum
+                st.session_state['report_title'] = f"AI Report: {auto_num} per {auto_cat}"
                 st.success("✅ One-Click Analysis Selesai! Hasil dapat dilihat pada tab 'AI Executive Summary'.")
         else:
             st.warning("Membutuhkan minimal 1 kolom kategori dan 1 kolom numerik untuk One-Click Analyze.")
@@ -445,13 +475,14 @@ if uploaded_file:
                     
                     st.session_state['res'] = res
                     st.session_state['data'] = summary_df
+                    st.session_state['report_title'] = f"AI Report: {val_col} per {group_col}"
 
             if 'res' in st.session_state:
                 st.markdown("---")
                 st.markdown(st.session_state['res'])
                 
                 pdf_bytes = generate_smart_pdf(
-                    title=f"AI Report: {val_col} per {group_col}",
+                    title=st.session_state.get('report_title', 'AI Executive Report'),
                     ai_insight=st.session_state['res'],
                     df_summary=st.session_state['data']
                 )
@@ -516,10 +547,12 @@ if uploaded_file:
                 chart_type = st.radio("Pilih Jenis Grafik:", available_charts, horizontal=True)
                 
                 fig = None
+                x_axis = p_rows[0] if len(p_rows) > 0 else p_res.columns[0]
+                
                 if chart_type == "Bar Chart":
-                    fig = px.bar(p_res, x=p_rows[0], y=p_vals, title=f"{p_agg.upper()} {p_vals} per {p_rows[0]}")
+                    fig = px.bar(p_res, x=x_axis, y=p_vals, title=f"{p_agg.upper()} {p_vals} per {x_axis}")
                 elif chart_type == "Line Chart":
-                    fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
+                    fig = px.line(p_res, x=x_axis, y=p_vals, markers=True, title=f"Tren {p_vals} per {x_axis}")
                 elif chart_type == "Pie Chart":
                     if p_res[p_vals].sum() <= 0:
                         st.warning("⚠️ Total nilai agregasi kurang dari atau sama dengan 0. Pie Chart tidak dapat ditampilkan.")
@@ -529,12 +562,14 @@ if uploaded_file:
                             p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
                         else:
                             p_res_pie = p_res
-                        fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi {p_vals} per {p_rows[0]}")
+                        fig = px.pie(p_res_pie, names=x_axis, values=p_vals, title=f"Proporsi {p_vals} per {x_axis}")
                     
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"Gagal membuat Pivot Table: {str(e)}.")
+                st.error(f"Gagal membuat Pivot Table / Chart: {str(e)}.")
+        else:
+            st.info("💡 Pilih minimal 1 Kategori (Rows) dan 1 Metrik (Values) untuk menampilkan Pivot Table dan Grafik.")
 
     # --- TAB 4: DATA PROFILING & MISSING VALUE REPORT ---
     with tab4:
