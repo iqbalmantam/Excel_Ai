@@ -51,11 +51,13 @@ def load_excel_data(file_bytes, file_name, sheet_name=None):
     try:
         file_obj = io.BytesIO(file_bytes)
         if file_name.endswith('.csv'):
-            return pd.read_csv(file_obj)
+            df = pd.read_csv(file_obj)
         else:
             excel = pd.ExcelFile(file_obj)
             selected = sheet_name if sheet_name else excel.sheet_names[0]
-            return excel.parse(selected)
+            df = excel.parse(selected)
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
     except Exception as e:
         st.error(f"Gagal membaca file: {str(e)}")
         return pd.DataFrame()
@@ -63,6 +65,9 @@ def load_excel_data(file_bytes, file_name, sheet_name=None):
 @st.cache_data(show_spinner=False)
 def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_dups=True):
     df_clean = df.copy()
+    
+    # Konversi seluruh nama kolom ke tipe String
+    df_clean.columns = [str(col).strip() for col in df_clean.columns]
     
     # Penanganan Kolom Duplikat yang Aman
     cols = pd.Series(df_clean.columns)
@@ -86,12 +91,14 @@ def clean_data_advanced(df, do_trim=True, do_upper=False, do_lower=False, drop_d
         elif do_lower:
             df_clean[col] = df_clean[col].astype(str).str.lower()
 
-    # Konversi otomatis kolom angka yang bermasalah (termasuk hilangkan simbol mata uang)
+    # Konversi otomatis kolom angka yang bermasalah (Pembersihan format IDR/USD, koma, titik)
     for col in df_clean.columns:
-        if col.lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total', 'harga']:
+        if str(col).lower() in ['qty', 'quantity', 'jumlah', 'weight', 'sku qty', 'price', 'total', 'harga']:
             if df_clean[col].dtype == object:
-                # Cleaning string berisi format angka / rupiah
-                cleaned_series = df_clean[col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                # Menghilangkan mata uang dan karakter non-numerik kecuali minus, titik, koma
+                cleaned_series = df_clean[col].astype(str).str.replace(r'[^\d.,-]', '', regex=True)
+                # Standarisasi format koma/titik ribuan
+                cleaned_series = cleaned_series.str.replace(',', '.', regex=False)
                 df_clean[col] = pd.to_numeric(cleaned_series, errors='coerce')
             else:
                 df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
@@ -160,8 +167,8 @@ def prepare_advanced_data_context(df):
     if categorical_cols:
         for cat in categorical_cols[:5]:
             top_counts = df[cat].value_counts().head(10).reset_index()
-            top_counts.columns = [cat, 'Jumlah']
-            ctx.append(f"\n--- DISTRIBUSI TOP 10 {cat.upper()} ---\n")
+            top_counts.columns = [str(cat), 'Jumlah']
+            ctx.append(f"\n--- DISTRIBUSI TOP 10 {str(cat).upper()} ---\n")
             ctx.append(top_counts.to_string(index=False))
 
     if numeric_cols:
@@ -217,7 +224,6 @@ def clean_latin_text(text):
     }
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
-    # Hapus karakter non-latin1 agar FPDF tidak crash
     return text.encode('latin-1', 'ignore').decode('latin-1')
 
 def generate_smart_pdf(title, ai_insight, df_summary):
@@ -255,7 +261,6 @@ def generate_smart_pdf(title, ai_insight, df_summary):
         pdf.ln()
         
     pdf_buffer = io.BytesIO()
-    # FIX: Menggunakan bytes(pdf.output()) yang kompatibel dengan fpdf2
     pdf_bytes = bytes(pdf.output())
     pdf_buffer.write(pdf_bytes)
     pdf_buffer.seek(0)
@@ -309,10 +314,11 @@ if uploaded_file:
 
         datetime_cols = []
         for col in df.columns:
-            if 'date' in col.lower() or 'tanggal' in col.lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
+            if 'date' in str(col).lower() or 'tanggal' in str(col).lower() or pd.api.types.is_datetime64_any_dtype(df[col]):
                 try:
-                    df[col] = pd.to_datetime(df[col])
-                    datetime_cols.append(col)
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    if df[col].notna().any():
+                        datetime_cols.append(col)
                 except Exception:
                     pass
 
@@ -322,15 +328,17 @@ if uploaded_file:
             st.write("**:mag: Dynamic Multi-Column Filters**")
             if datetime_cols:
                 date_col_selected = st.selectbox("Filter Kolom Tanggal:", datetime_cols)
-                min_date = filtered_df[date_col_selected].min().date()
-                max_date = filtered_df[date_col_selected].max().date()
-                date_range = st.date_input("Rentang Tanggal:", [min_date, max_date])
-                if len(date_range) == 2:
-                    start_d, end_d = date_range
-                    filtered_df = filtered_df[
-                        (filtered_df[date_col_selected].dt.date >= start_d) & 
-                        (filtered_df[date_col_selected].dt.date <= end_d)
-                    ]
+                valid_dates = filtered_df[date_col_selected].dropna()
+                if not valid_dates.empty:
+                    min_date = valid_dates.min().date()
+                    max_date = valid_dates.max().date()
+                    date_range = st.date_input("Rentang Tanggal:", [min_date, max_date])
+                    if len(date_range) == 2:
+                        start_d, end_d = date_range
+                        filtered_df = filtered_df[
+                            (filtered_df[date_col_selected].dt.date >= start_d) & 
+                            (filtered_df[date_col_selected].dt.date <= end_d)
+                        ]
 
             cat_cols_raw = df.select_dtypes(include=['object', 'category']).columns.tolist()
             if cat_cols_raw:
@@ -347,7 +355,8 @@ if uploaded_file:
     # Filter tambahan: Eliminasi kolom ID/Kode Unik bertipe integer
     valid_numeric_cols = []
     for c in numeric_cols:
-        if 'id' not in c.lower() and 'code' not in c.lower() and 'no' not in c.lower():
+        c_str = str(c).lower()
+        if 'id' not in c_str and 'code' not in c_str and 'no' not in c_str:
             valid_numeric_cols.append(c)
         elif filtered_df[c].nunique() < len(filtered_df):
             valid_numeric_cols.append(c)
@@ -418,7 +427,7 @@ if uploaded_file:
             with c2:
                 default_idx = 0
                 for idx, col_name in enumerate(valid_numeric_cols):
-                    if col_name.lower() in ['qty', 'quantity', 'jumlah']:
+                    if str(col_name).lower() in ['qty', 'quantity', 'jumlah']:
                         default_idx = idx
                         break
                 val_col = st.selectbox("Metrik Utama (Kolom Angka):", valid_numeric_cols, index=default_idx, key="tab1_num")
@@ -512,12 +521,15 @@ if uploaded_file:
                 elif chart_type == "Line Chart":
                     fig = px.line(p_res, x=p_rows[0], y=p_vals, markers=True, title=f"Tren {p_vals} per {p_rows[0]}")
                 elif chart_type == "Pie Chart":
-                    if len(p_res) > 20:
-                        st.warning("⚠️ Kategori lebih dari 20 item. Pie Chart otomatis membatasi ke Top 10 kategori terbesar.")
-                        p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
+                    if p_res[p_vals].sum() <= 0:
+                        st.warning("⚠️ Total nilai agregasi kurang dari atau sama dengan 0. Pie Chart tidak dapat ditampilkan.")
                     else:
-                        p_res_pie = p_res
-                    fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi {p_vals} per {p_rows[0]}")
+                        if len(p_res) > 20:
+                            st.warning("⚠️ Kategori lebih dari 20 item. Pie Chart otomatis membatasi ke Top 10 kategori terbesar.")
+                            p_res_pie = p_res.sort_values(by=p_vals, ascending=False).head(10)
+                        else:
+                            p_res_pie = p_res
+                        fig = px.pie(p_res_pie, names=p_rows[0], values=p_vals, title=f"Proporsi {p_vals} per {p_rows[0]}")
                     
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
@@ -532,7 +544,7 @@ if uploaded_file:
         with prof_c1:
             st.write("**:mag: Missing Value Report**")
             null_df = pd.DataFrame({
-                'Kolom': filtered_df.columns,
+                'Kolom': [str(c) for c in filtered_df.columns],
                 'Missing Count': filtered_df.isna().sum().values,
                 'Missing (%)': (filtered_df.isna().sum().values / max(len(filtered_df), 1) * 100).round(2)
             }).sort_values(by='Missing Count', ascending=False)
@@ -541,7 +553,7 @@ if uploaded_file:
         with prof_c2:
             st.write("**:info: Dataset Overview & Memory**")
             dtype_df = pd.DataFrame({
-                'Kolom': filtered_df.columns,
+                'Kolom': [str(c) for c in filtered_df.columns],
                 'Data Type': filtered_df.dtypes.astype(str).values,
                 'Unique Values': [filtered_df[c].nunique() for c in filtered_df.columns]
             })
